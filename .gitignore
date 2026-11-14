@@ -1,0 +1,8 @@
+# Nunca subir secretos ni datos sin cifrar
+.env
+*.env
+*.csv
+*.xlsx
+respaldo*.json
+datos/
+correos/
