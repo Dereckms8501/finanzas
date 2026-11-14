@@ -22,7 +22,7 @@ export const borrarTodo = () => tx('readwrite', s => s.clear());
 
 // ---------- Modelo ----------
 export const COLECCIONES = ['movs', 'cats', 'presup', 'metas', 'abonos', 'deudas', 'pagos', 'tcManual', 'tcAuto', 'ajustes', 'alertasCerradas',
-  'revisados', 'reglas', 'llaves', 'recurrentes'];
+  'revisados', 'reglas', 'llaves', 'recurrentes', 'compartidas'];
 export const CATS_BASE = [
   ['supermercados', 'Supermercados', 'carrito', '#165E83'],
   ['restaurantes', 'Restaurantes', 'plato', '#F4B3C2'],
@@ -126,8 +126,9 @@ export const movsMes = (e, mes) => lista(e, 'movs').filter(m => m.fecha.startsWi
 
 export function resumenMes(e, mes) {
   const movs = movsMes(e, mes).filter(m => m.estado !== 'pendiente');
+  // reembolso = pago de una cuenta compartida: no es ingreso ni gasto (el gasto ya se contó al dividir)
   const ingresosM = movs.filter(m => m.tipo === 'ingreso' && !m.reembolso);
-  const gastos = movs.filter(m => m.tipo === 'gasto');
+  const gastos = movs.filter(m => m.tipo === 'gasto' && !m.reembolso);
   const porCat = {};
   for (const g of gastos) porCat[g.cat] = (porCat[g.cat] || 0) + aCRC(g);
   const r = {
@@ -136,9 +137,11 @@ export function resumenMes(e, mes) {
     porCat,
     abonos: suma(lista(e, 'abonos').filter(a => a.fecha.startsWith(mes))),
     pagos: suma(lista(e, 'pagos').filter(p => p.fecha.startsWith(mes))),
-    sinpeEnv: suma(gastos.filter(m => m.medio === 'SINPE')),
+    sinpeEnv: suma(movs.filter(m => m.tipo === 'gasto' && m.medio === 'SINPE')),
     sinpeRec: suma(movs.filter(m => m.tipo === 'ingreso' && m.medio === 'SINPE')),
-    porOtros: 0, reembolsos: 0, // cuentas compartidas: llegan en la etapa 4
+    // lo que pagaste por otros (sale de tu bolsa pero no es gasto tuyo) y lo que te devolvieron
+    porOtros: suma(lista(e, 'compartidas').filter(c => c.clase === 'cargo' && c.sentido === 'meDeben' && c.fecha.startsWith(mes))),
+    reembolsos: suma(movs.filter(m => m.tipo === 'ingreso' && m.reembolso)),
   };
   r.disponible = r.ingresos - r.gastado - r.abonos - r.pagos - (r.porOtros - r.reembolsos);
   return r;
@@ -281,6 +284,77 @@ export function eventosMes(e, mes, h = hoy()) {
   return out;
 }
 
+// ---------- Cuentas compartidas ----------
+// compartidas: {id, clase: 'cargo'|'abono', sentido: 'meDeben'|'debo', persona, monto, moneda, fecha, movId, concepto, tc}
+// cargo = te deben o debés esa plata; abono = pago de esa deuda (va con un movimiento marcado reembolso).
+export function mismaPersona(a, b) { // "Ana" ≈ "ANA MARIA SOLANO"; los SINPE cortan nombres ("BRENE" ≈ "Brenes")
+  const t = s => norm(s).split(' ').filter(x => x.length >= 2);
+  const [x, y] = [t(a), t(b)].sort((p, q) => p.length - q.length);
+  const igual = (p, q) => p === q || (Math.min(p.length, q.length) >= 4 && (p.startsWith(q) || q.startsWith(p)));
+  return x.length > 0 && x.every(p => y.some(q => igual(p, q)));
+}
+export function saldosCompartidas(e) {
+  const g = {};
+  for (const c of lista(e, 'compartidas')) {
+    const k = `${c.sentido}|${norm(c.persona)}|${c.moneda}`;
+    const x = (g[k] ||= { persona: c.persona, sentido: c.sentido, moneda: c.moneda, saldo: 0, items: [] });
+    x.saldo += c.clase === 'cargo' ? c.monto : -c.monto;
+    x.items.push(c);
+  }
+  for (const x of Object.values(g)) { // desde = el cargo más viejo que todavía no está pagado
+    x.items.sort((a, b) => a.fecha.localeCompare(b.fecha) || (a.clase === 'abono') - (b.clase === 'abono'));
+    let pagado = x.items.filter(c => c.clase === 'abono').reduce((s, c) => s + c.monto, 0);
+    x.desde = null;
+    for (const c of x.items.filter(c => c.clase === 'cargo')) { if (pagado >= c.monto - 0.005) pagado -= c.monto; else { x.desde = c.fecha; break; } }
+    if (x.saldo < 0.005) x.saldo = Math.max(0, x.saldo);
+  }
+  return Object.values(g);
+}
+// Un SINPE de alguien que te debe (o a alguien a quien le debés), por un monto igual o menor al saldo.
+export function deudaDe(e, m) {
+  if (m.medio !== 'SINPE' || !(m.monto > 0) || !m.quien || m.noReconocido) return null;
+  const sentido = m.tipo === 'ingreso' ? 'meDeben' : 'debo';
+  return saldosCompartidas(e).filter(s => s.sentido === sentido && s.moneda === m.moneda && s.saldo > 0.005 && m.monto <= s.saldo + 0.5
+    && mismaPersona(s.persona, m.quien)).sort((a, b) => b.saldo - a.saldo)[0] || null;
+}
+// Reparte una cuenta. o = {yo, personas, modo: 'iguales'|'distintos', montos: {persona: n}, quienPago, cuantos, miParte}
+export function repartir(total, moneda, o) {
+  const r = n => (moneda === 'USD' ? Math.round(n * 100) / 100 : Math.round(n));
+  if (o.yo) {
+    const ps = [...new Map((o.personas || []).map(p => [norm(p), p.trim()])).values()].filter(Boolean);
+    if (!ps.length) return { error: 'Escribí con quién dividiste la cuenta' };
+    const partes = o.modo === 'distintos' ? ps.map(p => ({ persona: p, monto: o.montos?.[p] }))
+      : ps.map(p => ({ persona: p, monto: r(total / (ps.length + 1)) }));
+    if (partes.some(p => !(p.monto > 0))) return { error: 'Escribí cuánto le toca a cada persona' };
+    const mia = r(total - partes.reduce((s, p) => s + p.monto, 0));
+    if (mia < 0) return { error: 'Las partes de los demás suman más que el total' };
+    return { yo: true, mia, partes };
+  }
+  if (!o.quienPago?.trim()) return { error: 'Escribí quién pagó' };
+  const mia = o.modo === 'distintos' ? o.miParte : o.cuantos >= 2 ? r(total / o.cuantos) : NaN;
+  if (!(mia > 0) || mia > total + 1e-9)
+    return { error: o.modo === 'distintos' ? 'Escribí tu parte (no puede ser más que el total)' : 'Escribí entre cuántas personas se dividió (2 o más)' };
+  return { yo: false, mia, partes: [{ persona: o.quienPago.trim(), monto: mia }] };
+}
+// mov tiene el total de la cuenta. Tu parte queda como gasto; lo de los demás va a "Me deben" (o tu parte a "Debo").
+export function guardarDividido(e, mov, rep) {
+  const sentido = rep.yo ? 'meDeben' : 'debo', tc = mov.tc ?? tcDe(e, mov.fecha);
+  for (const p of rep.partes)
+    poner(e, 'compartidas', { id: nuevoId(), clase: 'cargo', sentido, persona: p.persona, monto: p.monto, moneda: mov.moneda, fecha: mov.fecha,
+      movId: mov.id, concepto: mov.quien || mov.nota || e.cats[mov.cat]?.nombre || '', tc });
+  if (!(rep.mia > 0)) { if (e.movs[mov.id]) quitar(e, 'movs', mov.id); return null; } // pagaste todo por otros: no hay gasto tuyo
+  return poner(e, 'movs', { ...mov, monto: rep.mia, total: mov.monto, dividido: rep.yo ? 'yo' : rep.partes[0].persona, medio: rep.yo ? mov.medio : '', tc });
+}
+// Pago de una cuenta compartida: crea el movimiento (reembolso, no cuenta como ingreso ni gasto) y el abono.
+export function pagarCompartida(e, sentido, persona, d) {
+  const ing = sentido === 'meDeben';
+  const mov = poner(e, 'movs', { id: d.id || nuevoId(), tipo: ing ? 'ingreso' : 'gasto', monto: d.monto, moneda: d.moneda, fecha: d.fecha, medio: d.medio,
+    quien: d.quien || persona, nota: d.nota || (ing ? `Te pagó lo que te debía` : `Pago de lo que le debías`), cat: null, fuente: null, reembolso: true,
+    origen: d.origen || 'manual', correoId: d.correoId, estado: 'ok', tc: tcDe(e, d.fecha) });
+  poner(e, 'compartidas', { id: `a-${mov.id}`, clase: 'abono', sentido, persona, monto: d.monto, moneda: d.moneda, fecha: d.fecha, movId: mov.id, tc: mov.tc });
+  return mov;
+}
+
 // (Disponible − lo que falta pagar este mes) ÷ días que quedan contando hoy
 export function presupuestoDiario(e, h = hoy()) {
   const mes = mesDe(h), r = resumenMes(e, mes), tc = tcDe(e, h) || 0;
@@ -324,6 +398,9 @@ export function alertas(e, h = hoy()) {
     if (s.atrasada)
       out.push({ clave: `meta|${m.id}|${mes}`, nivel: 'amarillo', texto: `Meta "${m.nombre}" va atrasada: deberías llevar ${monto(s.esperado, m.moneda)} y llevás ${monto(s.ahorrado, m.moneda)}` });
   }
+  for (const s of saldosCompartidas(e))
+    if (s.sentido === 'meDeben' && s.saldo > 0.005 && s.desde && diasEntre(s.desde, h) > 15)
+      out.push({ clave: `debe|${norm(s.persona)}|${s.desde}`, nivel: 'amarillo', texto: `${s.persona} te debe ${monto(s.saldo, s.moneda)} desde hace ${diasEntre(s.desde, h)} días` });
   for (const m of lista(e, 'movs'))
     if (m.estado === 'pendiente' && m.rec && m.fecha < h)
       out.push({ clave: `pend|${m.id}`, nivel: 'amarillo', texto: `${m.quien}: ${m.tipo === 'ingreso' ? 'el ingreso' : 'el pago'} del ${fechaCorta(m.fecha)} sigue pendiente de confirmar` });
@@ -348,6 +425,8 @@ function sugerenciaBase(e, m) {
 export function sugerirCorreo(e, m) {
   const rc = recurrenteDe(e, m); // si es un recurrente o ingreso fijo, va en su categoría
   if (rc) { const v = m.tipo === 'ingreso' ? rc.r.fuente : rc.r.cat; if (m.tipo === 'ingreso' ? FUENTES[v] : e.cats[v] && !e.cats[v].del) return v; }
+  const dd = deudaDe(e, m); // SINPE de alguien que te debe, o a alguien a quien le debés
+  if (dd) return `deuda:${dd.persona}`;
   const regla = m.quien ? e.reglas[claveRegla(m.tipo, m.quien)] : null;
   const valido = regla && !regla.del && (m.tipo === 'ingreso' ? FUENTES[regla.valor] : e.cats[regla.valor] && !e.cats[regla.valor].del);
   return valido ? regla.valor : sugerenciaBase(e, m);
@@ -358,9 +437,12 @@ export function aplicarRevision(e, m, { descartar, monto, valor }) {
   const accion = descartar || m.noReconocido ? 'descartado' : 'aceptado';
   for (const id of idsCorreo(m)) poner(e, 'revisados', { id, accion });
   if (accion === 'descartado') return null;
-  const rc = recurrenteDe(e, m);
-  if (m.quien && !rc && valor !== sugerirCorreo(e, m)) poner(e, 'reglas', { id: claveRegla(m.tipo, m.quien), valor }); // aprende
-  const ing = m.tipo === 'ingreso';
+  const ing = m.tipo === 'ingreso', origen = m.origen === 'siri' ? 'siri' : 'correo';
+  if (String(valor).startsWith('deuda:')) // pago de una cuenta compartida: no es ingreso ni gasto
+    return pagarCompartida(e, ing ? 'meDeben' : 'debo', valor.slice(6), { id: `c-${m.id}`, monto: monto > 0 ? monto : m.monto, moneda: m.moneda,
+      fecha: m.fecha, medio: m.medio, quien: m.quien, nota: m.nota, origen, correoId: m.id });
+  const rc = recurrenteDe(e, m), sug = sugerirCorreo(e, m);
+  if (m.quien && !rc && valor !== sug && !sug.startsWith('deuda:')) poner(e, 'reglas', { id: claveRegla(m.tipo, m.quien), valor }); // aprende
   const mov = {
     id: `c-${m.id}`, tipo: m.tipo, monto: monto > 0 ? monto : m.monto, moneda: m.moneda, fecha: m.fecha, medio: m.medio,
     quien: m.quien || '', nota: m.nota || '', cat: ing ? null : valor, fuente: ing ? valor : null,
@@ -380,6 +462,8 @@ export function aplicarRevision(e, m, { descartar, monto, valor }) {
 export function claroCorreo(e, m) {
   if (m.noReconocido || !(m.monto > 0) || !m.fecha) return false;
   if (recurrenteDe(e, m)) return true; // calza con un recurrente o ingreso fijo: se une con su pendiente
+  const dd = deudaDe(e, m); // pagarle a quien le debés se marca solo; lo que te pagan a vos pasa por la revisión
+  if (dd) return dd.sentido === 'debo';
   if (m.confirmar || m.origen === 'uber') return false;
   const repetido = lista(e, 'movs').some(x => x.origen !== 'correo' && x.origen !== 'siri' && x.tipo === m.tipo
     && x.moneda === m.moneda && Math.abs(x.monto - m.monto) < 0.5 && Math.abs(diasEntre(x.fecha, m.fecha)) <= 1);

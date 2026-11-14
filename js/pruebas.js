@@ -278,6 +278,46 @@ try {
   ok('calendario: estados del mes', evs['2026-11-05'][0].estado === 'listo' && evs['2026-11-10'][0].estado === 'listo' && evs['2026-11-25'][0].estado === 'proximo');
   ok('total mensual: quincenal cuenta doble', D.mensualRec({ monto: 1000, frecuencia: 'quincenal' }) === 2000);
 
+  // ---- Cuentas compartidas ----
+  ok('dividir: partes iguales entre 3', (r => r.mia === 3000 && r.partes.every(p => p.monto === 3000))(D.repartir(9000, 'CRC', { yo: true, personas: ['Ana', 'Luis'], modo: 'iguales' })));
+  ok('dividir: el redondeo lo absorbe tu parte', D.repartir(10000, 'CRC', { yo: true, personas: ['Ana', 'Luis'], modo: 'iguales' }).mia === 3334);
+  ok('dividir: montos distintos', D.repartir(9000, 'CRC', { yo: true, personas: ['Ana', 'Luis'], modo: 'distintos', montos: { Ana: 4000, Luis: 2000 } }).mia === 3000);
+  ok('dividir: partes que suman más que el total dan error', !!D.repartir(5000, 'CRC', { yo: true, personas: ['Ana'], modo: 'distintos', montos: { Ana: 6000 } }).error);
+  ok('dividir: pagó otra persona', (r => !r.yo && r.mia === 3000 && r.partes[0].persona === 'Pedro')(D.repartir(9000, 'CRC', { yo: false, quienPago: 'Pedro', modo: 'iguales', cuantos: 3 })));
+  ok('nombres parecidos: SINPE con el nombre cortado', D.mismaPersona('Logan Brenes', 'LOGAN MARIANO BRENE') && D.mismaPersona('Ana', 'ANA MARÍA SOLANO') && !D.mismaPersona('Ana', 'ANABEL ROJAS'));
+
+  const ex = D.estadoNuevo('Comp', 500);
+  D.poner(ex, 'movs', { id: 'in', tipo: 'ingreso', monto: 50000, moneda: 'CRC', fecha: '2026-11-01', medio: 'SINPE', fuente: 'beca', estado: 'ok' });
+  const cena = D.poner(ex, 'movs', { id: 'cena', tipo: 'gasto', monto: 9000, moneda: 'CRC', fecha: '2026-11-02', medio: 'Tarjeta', quien: 'Pizzería', cat: 'restaurantes', estado: 'ok' });
+  D.guardarDividido(ex, cena, D.repartir(9000, 'CRC', { yo: true, personas: ['Ana', 'Luis'], modo: 'iguales' }));
+  let rx = D.resumenMes(ex, '2026-11');
+  ok('dividir: tu parte es gasto y lo de los demás no', rx.gastado === 3000 && rx.porOtros === 6000 && rx.disponible === 50000 - 9000 && ex.movs.cena.total === 9000);
+  ok('me deben: saldo por persona', D.saldosCompartidas(ex).filter(s => s.sentido === 'meDeben').map(s => `${s.persona} ${s.saldo}`).join() === 'Ana 3000,Luis 3000');
+
+  const sAna = { id: 'k1', origen: 'bac-sinpe', tipo: 'ingreso', medio: 'SINPE', monto: 3000, moneda: 'CRC', fecha: '2026-11-04', quien: 'ANA MARIA SOLANO', fuente: 'otro' };
+  ok('SINPE de alguien que te debe: la revisión lo propone como pago', D.sugerirCorreo(ex, sAna) === 'deuda:Ana' && !D.claroCorreo(ex, sAna));
+  ok('SINPE por más de lo que debe: no se toma como pago', !D.deudaDe(ex, { ...sAna, monto: 5000 }));
+  D.aplicarRevision(ex, sAna, { valor: D.sugerirCorreo(ex, sAna) });
+  rx = D.resumenMes(ex, '2026-11');
+  ok('el pago de Ana no cuenta como ingreso, pero vuelve al disponible', rx.ingresos === 50000 && rx.reembolsos === 3000 && rx.disponible === 50000 - 9000 + 3000
+    && rx.sinpeRec === 53000 && D.saldosCompartidas(ex).find(s => s.persona === 'Ana').saldo === 0);
+
+  const pizza = D.poner(ex, 'movs', { id: 'piz', tipo: 'gasto', monto: 12000, moneda: 'CRC', fecha: '2026-11-05', medio: 'Tarjeta', quien: 'Pizza', cat: 'restaurantes', estado: 'ok' });
+  D.guardarDividido(ex, pizza, D.repartir(12000, 'CRC', { yo: false, quienPago: 'Pedro', modo: 'iguales', cuantos: 3 }));
+  rx = D.resumenMes(ex, '2026-11');
+  ok('pagó otra persona: tu parte es gasto y queda en "Debo"', rx.gastado === 7000 && ex.movs.piz.monto === 4000 && ex.movs.piz.medio === ''
+    && D.saldosCompartidas(ex).find(s => s.sentido === 'debo').saldo === 4000);
+  const sPedro = { id: 'k2', origen: 'kash', tipo: 'gasto', medio: 'SINPE', monto: 4000, moneda: 'CRC', fecha: '2026-11-06', quien: 'PEDRO JIMENEZ', cat: 'otros' };
+  ok('SINPE a quien le debés: se marca solo como pago', D.claroCorreo(ex, sPedro) && D.anotarClaros(ex, [sPedro]) === 1);
+  rx = D.resumenMes(ex, '2026-11');
+  ok('ese SINPE no se cuenta otra vez como gasto', rx.gastado === 7000 && rx.sinpeEnv === 4000 && ex.movs['c-k2'].reembolso
+    && D.saldosCompartidas(ex).find(s => s.sentido === 'debo').saldo === 0);
+  ok('alerta: alguien te debe hace más de 15 días', D.alertas(ex, '2026-11-18').some(a => a.texto.startsWith('Luis te debe')) && !D.alertas(ex, '2026-11-15').some(a => a.texto.startsWith('Luis')));
+  ok('pagaste todo por otros: no queda gasto tuyo', (() => {
+    const t = D.poner(ex, 'movs', { id: 'reg', tipo: 'gasto', monto: 5000, moneda: 'CRC', fecha: '2026-11-07', medio: 'Tarjeta', cat: 'otros', estado: 'ok' });
+    return D.guardarDividido(ex, t, D.repartir(5000, 'CRC', { yo: true, personas: ['Luis'], modo: 'distintos', montos: { Luis: 5000 } })) === null && ex.movs.reg.del;
+  })());
+
   const nuevas = D.agregarTcAuto(ec, { '2026-11-12': { compra: 440, venta: 450 }, '2026-11-13': { compra: 0, venta: 451 } });
   ok('tipo de cambio automático: solo fechas válidas', nuevas.join() === '2026-11-12' && D.tcDe(ec, '2026-11-12') === 450);
   ok('tipo de cambio: el manual le gana al automático', (D.poner(ec, 'tcManual', { id: '2026-11-12', valor: 455 }), D.tcDe(ec, '2026-11-12') === 455));

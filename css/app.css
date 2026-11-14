@@ -200,6 +200,18 @@ label.check input { width: 20px; min-height: 20px; }
 .p-deuda { background: var(--aviso); }
 .fila-ley { flex-wrap: wrap; }
 
+/* Cuentas compartidas */
+.form-div:has(input[name=pagador][value=otro]:checked) .solo-yo,
+.form-div:has(input[name=pagador][value=yo]:checked) .solo-otro,
+.form-div:has(input[name=modo][value=distintos]:checked) .solo-iguales { display: none; }
+.form-div .seg { width: fit-content; }
+.persona { border-bottom: 1px solid var(--borde); padding-bottom: 8px; }
+.persona:last-child { border-bottom: 0; }
+.persona .mov { border-bottom: 0; }
+.persona details { margin-top: 0; padding-left: 46px; }
+.hist { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 14px; }
+.hist > span:nth-child(3) { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 .barra { height: 6px; background: var(--borde); border-radius: 3px; overflow: hidden; margin: 6px 0; }
 .barra i { display: block; height: 100%; border-radius: 3px; background: var(--exito); }
 .barra i.amarillo { background: var(--aviso); }

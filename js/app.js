@@ -446,7 +446,8 @@ function formMov(m = {}) {
     <input name="quien" list="quienes" placeholder="Comercio o persona (opcional)" value="${esc(m.quien)}" autocomplete="off">
     <datalist id="quienes">${quienes.map(q => `<option value="${esc(q)}">`).join('')}</datalist>
     <input name="nota" placeholder="Nota (opcional)" value="${esc(m.nota)}">
-    <button class="btn">${m.id ? 'Guardar cambios' : 'Guardar'}</button></form>`;
+    ${m.id ? '<button class="btn">Guardar cambios</button>'
+      : `<div class="fila"><button class="btn crece">Guardar</button><button type="button" class="btn sec-btn solo-gasto" data-a="dividir">Dividir</button></div>`}</form>`;
 }
 
 function filaMov(m) {
@@ -455,17 +456,18 @@ function filaMov(m) {
   const sub = [D.fechaCorta(m.fecha), m.medio, m.quien ? (ing ? D.FUENTES[m.fuente] : c?.nombre) : '', m.nota].filter(Boolean).map(esc).join(' · ');
   const pend = m.estado === 'pendiente';
   return `<div class="mov ${pend ? 'pend' : ''}">${ing ? `<span class="ic-cat" style="--c:var(--exito)">${icono(m.medio === 'SINPE' ? 'sinpe' : 'ingreso')}</span>` : icCat(c)}
-    <div class="txt"><b>${esc(titulo)}</b><span class="sec">${sub}${m.origen === 'correo' ? ' <span class="chip">desde correo</span>' : ''}${m.origen === 'siri' ? ' <span class="chip">desde Siri</span>' : ''}${pend ? ' <span class="chip pend">pendiente</span>' : m.rec ? ` <span class="chip">${ing ? 'fijo' : 'recurrente'}</span>` : ''}</span></div>
-    <div class="m ${ing ? 'pos' : ''}">${ing ? '+' : ''}${monto(m.monto, m.moneda)}${m.moneda === 'USD' && !pend ? `<span class="sec">${crc(D.aCRC(m))}</span>` : ''}</div>
+    <div class="txt"><b>${esc(titulo)}</b><span class="sec">${sub}${m.origen === 'correo' ? ' <span class="chip">desde correo</span>' : ''}${m.origen === 'siri' ? ' <span class="chip">desde Siri</span>' : ''}${pend ? ' <span class="chip pend">pendiente</span>' : m.rec ? ` <span class="chip">${ing ? 'fijo' : 'recurrente'}</span>` : ''}${m.reembolso ? ` <span class="chip">${ing ? 'te pagó lo que te debía' : 'pago de lo que debías'}</span>` : ''}${m.dividido ? ` <span class="chip">${m.dividido === 'yo' ? 'dividido' : `pagó ${esc(m.dividido)}`}</span>` : ''}</span></div>
+    <div class="m ${ing ? 'pos' : ''}">${ing ? '+' : ''}${monto(m.monto, m.moneda)}${m.moneda === 'USD' && !pend ? `<span class="sec">${crc(D.aCRC(m))}</span>` : ''}${m.total ? `<span class="sec">de ${monto(m.total, m.moneda)}</span>` : ''}</div>
     ${pend ? `<button class="ico-btn chico confirmar" data-a="confirmarMov" data-v="${m.id}" aria-label="Confirmar" title="Confirmar">${icono('check')}</button>` : ''}
     <button class="ico-btn chico" data-a="editarMov" data-v="${m.id}" aria-label="Editar">${icono('lapiz')}</button>
     <button class="ico-btn chico" data-a="borrarMov" data-v="${m.id}" aria-label="Borrar">${icono('basura')}</button></div>`;
 }
 
 function vMovs() {
-  const pest = `<div class="seg pestañas">${[['lista', 'Lista'], ['sinpe', 'SINPE'], ['rec', 'Recurrentes'], ['cal', 'Calendario']].map(([k, n]) =>
+  const pest = `<div class="seg pestañas">${[['lista', 'Lista'], ['sinpe', 'SINPE'], ['deben', 'Me deben / Debo'], ['rec', 'Recurrentes'], ['cal', 'Calendario']].map(([k, n]) =>
     `<button data-a="vistaMov" data-v="${k}" class="${ui.vistaMov === k ? 'activa' : ''}">${n}</button>`).join('')}</div>`;
   if (ui.vistaMov === 'sinpe') return pest + vSinpe();
+  if (ui.vistaMov === 'deben') return pest + vCompartidas();
   if (ui.vistaMov === 'rec') return pest + vRecurrentes();
   if (ui.vistaMov === 'cal') return pest + vCalendario();
   const movs = D.movsMes(E, ui.mes)
@@ -496,6 +498,65 @@ function vSinpe() {
     ${filas.map(m => `<tr><td>${D.fechaCorta(m.fecha)}</td><td>${esc(m.quien || '—')}</td><td>${m.tipo === 'gasto' ? 'Enviado' : '<span class="txt-verde">Recibido</span>'}</td><td>${monto(m.monto, m.moneda)}</td></tr>`).join('')}
     </tbody></table>` : '<p class="vacio">No hay SINPE aquí.</p>'}
     <dl class="trio"><div><dt>Total enviado</dt><dd>${crc(env)}</dd></div><div><dt>Total recibido</dt><dd>${crc(rec)}</dd></div><div><dt>Diferencia</dt><dd>${crc(rec - env)}</dd></div></dl></div>`;
+}
+
+// ---------------- Cuentas compartidas ----------------
+function vCompartidas() {
+  const todos = D.saldosCompartidas(E), h = D.hoy();
+  const bloque = (sentido, titulo, vacio) => {
+    const xs = todos.filter(x => x.sentido === sentido).sort((a, b) => (b.saldo > 0) - (a.saldo > 0) || b.saldo - a.saldo);
+    const total = xs.reduce((t, x) => t + x.saldo * (x.moneda === 'USD' ? tcHoy() : 1), 0), meDeben = sentido === 'meDeben';
+    return `<div class="tarjeta"><h2>${titulo}</h2>
+      ${xs.length ? `<p class="sec">Total: <strong>${crc(total)}</strong></p>` : `<p class="vacio">${vacio}</p>`}
+      ${xs.map(x => {
+        const dias = x.desde ? D.diasEntre(x.desde, h) : 0;
+        return `<div class="persona"><div class="mov"><span class="ic-cat" style="--c:${meDeben ? 'var(--exito)' : 'var(--aviso)'}">${icono('sinpe')}</span>
+          <div class="txt"><b>${esc(x.persona)}</b><span class="sec ${meDeben && dias > 15 ? 'txt-rojo' : ''}">${x.saldo > 0 ? `desde el ${D.fechaCorta(x.desde)}${dias > 1 ? ` (hace ${dias} días)` : ''}` : 'al día'}</span></div>
+          <div class="m">${monto(x.saldo, x.moneda)}</div>
+          ${x.saldo > 0 ? `<button class="btn chico" data-a="pagoComp" data-v="${sentido}|${encodeURIComponent(x.persona)}|${x.moneda}">${meDeben ? 'Me pagó' : 'Le pagué'}</button>` : ''}</div>
+          <details><summary>Historial (${x.items.length})</summary>${x.items.slice().reverse().map(c => `<div class="hist"><span>${D.fechaCorta(c.fecha)}</span>
+            <span class="crece">${c.clase === 'cargo' ? esc(c.concepto || (meDeben ? 'Cuenta dividida' : 'Pagó por vos')) : meDeben ? 'Te pagó' : 'Le pagaste'}</span>
+            <span class="${c.clase === 'abono' ? 'txt-verde' : ''}">${c.clase === 'cargo' ? '+' : '−'}${monto(c.monto, c.moneda)}</span>
+            <button class="ico-btn chico" data-a="borrarComp" data-v="${c.id}" aria-label="Borrar">${icono('basura')}</button></div>`).join('')}</details></div>`;
+      }).join('')}</div>`;
+  };
+  return `<div class="rejilla">${bloque('meDeben', 'Me deben', 'Nadie te debe nada. Cuando dividás una cuenta que pagaste vos, aparece aquí.')}
+    ${bloque('debo', 'Debo', 'No le debés a nadie. Si alguien paga por vos, anotalo con "Dividir" y "Pagó otra persona".')}</div>
+  <p class="nota">Para dividir una cuenta, tocá "Dividir" al anotar un gasto o al revisar los movimientos del correo. Cuando te llega un SINPE de alguien que te debe, la revisión te propone anotarlo como pago (no cuenta como ingreso).</p>`;
+}
+
+// Ventana "Dividir": base = el gasto con el total ({monto, moneda, cat, fecha, medio, quien, nota}); correo = el movimiento del correo, si viene de la revisión
+const personasConocidas = () => [...new Set([...D.lista(E, 'compartidas').map(c => c.persona), ...D.lista(E, 'movs').filter(m => m.medio === 'SINPE').map(m => m.quien)].filter(Boolean))].sort();
+function formDividir(base) {
+  return `<h2>Dividir la cuenta</h2><form data-f="dividir" class="form-col form-div">
+    <p>Total: <strong>${monto(base.monto, base.moneda)}</strong>${base.quien ? ` · ${esc(base.quien)}` : ''}</p>
+    <div class="seg" role="radiogroup"><label><input type="radio" name="pagador" value="yo" checked>Pagué yo</label><label><input type="radio" name="pagador" value="otro">Pagó otra persona</label></div>
+    <label class="solo-yo">¿Con quiénes? (separá los nombres con comas)<input name="personas" placeholder="Ej. Ana, Luis" autocomplete="off"></label>
+    <label class="solo-otro">¿Quién pagó?<input name="quienPago" list="personas-dl" autocomplete="off"></label>
+    <datalist id="personas-dl">${personasConocidas().map(p => `<option value="${esc(p)}">`).join('')}</datalist>
+    <div class="seg" role="radiogroup"><label><input type="radio" name="modo" value="iguales" checked>Partes iguales</label><label><input type="radio" name="modo" value="distintos">Montos distintos</label></div>
+    <label class="solo-otro solo-iguales">¿Entre cuántas personas, contándote?<input name="cuantos" type="number" min="2" value="2"></label>
+    <div class="montos form-col"></div>
+    <p class="res-div sec" aria-live="polite"></p>
+    <button class="btn">Guardar</button></form>`;
+}
+function leerDividir(f) {
+  const personas = f.personas.value.split(',').map(s => s.trim()).filter(Boolean);
+  return { yo: f.pagador.value === 'yo', personas, modo: f.modo.value, quienPago: f.quienPago.value,
+    cuantos: +f.cuantos.value, miParte: D.parseMonto(f.elements.miParte?.value),
+    montos: Object.fromEntries(personas.map(p => [p, D.parseMonto(f.elements[`m|${p}`]?.value)])) };
+}
+function actualizarDividir(f, t) {
+  const o = leerDividir(f), base = ui.dividir.base;
+  if (['personas', 'modo', 'pagador'].includes(t?.name)) { // rehace las casillas de montos sin perder lo escrito
+    const caja = f.querySelector('.montos'), antes = Object.fromEntries([...caja.querySelectorAll('input')].map(i => [i.name, i.value]));
+    const casilla = (nombre, titulo) => `<label>${esc(titulo)}<input name="${esc(nombre)}" inputmode="decimal" value="${esc(antes[nombre] || '')}"></label>`;
+    caja.innerHTML = o.modo !== 'distintos' ? '' : o.yo ? o.personas.map(p => casilla(`m|${p}`, `Le toca a ${p}`)).join('') : casilla('miParte', 'Tu parte');
+  }
+  const r = D.repartir(base.monto, base.moneda, leerDividir(f)), m = n => monto(n, base.moneda);
+  f.querySelector('.res-div').textContent = r.error ? '' : r.yo
+    ? `Tu parte: ${m(r.mia)}. Te deben: ${r.partes.map(p => `${p.persona} ${m(p.monto)}`).join(', ')}.`
+    : `Tu parte: ${m(r.mia)}. Se la debés a ${r.partes[0].persona}.`;
 }
 
 // ---------------- Recurrentes y calendario ----------------
@@ -668,10 +729,16 @@ function filaRevision(m) {
     <span class="sec">${m.fecha ? D.fechaCorta(m.fecha) + ' · ' : ''}${esc(m.remitente)}</span><span class="sec">"${esc(m.asunto)}"</span>
     <span class="nota">Si era un movimiento, anotalo a mano. Al confirmar se quita de esta lista.</span></div></div>`;
   const ing = m.tipo === 'ingreso', sug = D.sugerirCorreo(E, m);
-  const chips = [m.origen === 'siri' ? 'desde Siri' : 'desde correo', m.confirmar ? '¿viaje o Uber Eats? revisá la categoría' : ''].filter(Boolean);
+  const dd = sug.startsWith('deuda:') ? sug.slice(6) : '';
+  const chips = [m.origen === 'siri' ? 'desde Siri' : 'desde correo', m.confirmar ? '¿viaje o Uber Eats? revisá la categoría' : '',
+    dd ? (ing ? `parece que ${dd} te está pagando lo que te debe` : `parece el pago de lo que le debés a ${dd}`) : ''].filter(Boolean);
+  // personas con cuentas pendientes: el movimiento se puede anotar como pago de esa cuenta (no cuenta como ingreso ni gasto)
+  const deudas = D.saldosCompartidas(E).filter(s => s.sentido === (ing ? 'meDeben' : 'debo') && s.saldo > 0 && s.moneda === m.moneda);
+  const opDeudas = deudas.length ? `<optgroup label="Cuenta compartida">${deudas.map(s => `<option value="deuda:${esc(s.persona)}" ${sug === `deuda:${s.persona}` ? 'selected' : ''}>${ing
+    ? `Pago de ${esc(s.persona)} (te debe ${monto(s.saldo, s.moneda)})` : `Pago a ${esc(s.persona)} (le debés ${monto(s.saldo, s.moneda)})`}</option>`).join('')}</optgroup>` : '';
   const sel = ing
-    ? `<select name="valor|${m.id}" aria-label="Fuente del ingreso">${Object.entries(D.FUENTES).map(([k, v]) => `<option value="${k}" ${sug === k ? 'selected' : ''}>${v}</option>`).join('')}</select>`
-    : `<select name="valor|${m.id}" aria-label="Categoría">${D.cats(E).map(c => `<option value="${c.id}" ${sug === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}</select>`;
+    ? `<select name="valor|${m.id}" aria-label="Fuente del ingreso">${Object.entries(D.FUENTES).map(([k, v]) => `<option value="${k}" ${sug === k ? 'selected' : ''}>${v}</option>`).join('')}${opDeudas}</select>`
+    : `<select name="valor|${m.id}" aria-label="Categoría">${D.cats(E).map(c => `<option value="${c.id}" ${sug === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}${opDeudas}</select>`;
   return `<div class="rev ${m.confirmar ? 'confirmar' : ''}">
     <div class="txt"><b>${esc(m.quien || (ing ? 'SINPE recibido' : m.medio === 'SINPE' ? 'SINPE enviado' : 'Gasto'))}</b>
       <span class="sec">${[m.fecha ? D.fechaCorta(m.fecha) : '', m.hora, ing ? 'Ingreso' : 'Gasto', m.medio].filter(Boolean).map(esc).join(' · ')}</span>
@@ -679,7 +746,8 @@ function filaRevision(m) {
       <span>${chips.map(c => `<span class="chip">${esc(c)}</span>`).join(' ')}</span></div>
     <div class="campos"><div class="fila"><input name="monto|${m.id}" inputmode="decimal" value="${D.numPlano(m.monto, m.moneda)}" aria-label="Monto">
       <span class="moneda-fija">${m.moneda === 'USD' ? '$' : '₡'}</span></div>${sel}
-      <label class="check"><input type="checkbox" name="descartar|${m.id}"> Descartar</label></div></div>`;
+      <label class="check"><input type="checkbox" name="descartar|${m.id}"> Descartar</label>
+      ${ing ? '' : `<button type="button" class="btn sec-btn chico" data-a="dividirCorreo" data-v="${m.id}">Dividir</button>`}</div></div>`;
 }
 
 function vCorreo() {
@@ -792,7 +860,41 @@ const ACC = {
   deshacer: () => { toast._deshacer?.(); toast.className = ''; },
   nuevoIngreso: () => abrirDialogo(`<h2>Nuevo ingreso</h2>${formMov({ tipo: 'ingreso', medio: 'SINPE', fecha: ui.mes === D.mesDe(D.hoy()) ? D.hoy() : ui.mes + '-01' })}`),
   editarMov: v => abrirDialogo(`<h2>Editar movimiento</h2>${formMov(E.movs[v])}`),
-  borrarMov: v => { if (confirm('¿Borrar este movimiento?')) { cambiar(() => D.quitar(E, 'movs', v)); aviso('Movimiento borrado', () => cambiar(() => D.poner(E, 'movs', E.movs[v]))); } },
+  borrarMov: v => {
+    const rel = D.lista(E, 'compartidas').filter(c => c.movId === v); // lo que te deben o debés por este gasto, o el abono de este pago
+    if (!confirm(`¿Borrar este movimiento?${rel.length ? ' También se borra lo que quedó en "Me deben / Debo" por él.' : ''}`)) return;
+    cambiar(() => { D.quitar(E, 'movs', v); rel.forEach(c => D.quitar(E, 'compartidas', c.id)); });
+    aviso('Movimiento borrado', () => cambiar(() => { D.poner(E, 'movs', E.movs[v]); rel.forEach(c => D.poner(E, 'compartidas', E.compartidas[c.id])); }));
+  },
+  dividir: (v, b) => {
+    const base = movDeForm(b.closest('form'));
+    if (!base) return;
+    ui.dividir = { base };
+    abrirDialogo(formDividir(base));
+  },
+  dividirCorreo: v => {
+    const item = pendientes().find(x => x.id === v), f = $('form[data-f=revisar]');
+    if (!item) return;
+    const valorMonto = D.parseMonto(f?.elements[`monto|${v}`]?.value), cat = f?.elements[`valor|${v}`]?.value;
+    const base = { ...item, monto: valorMonto > 0 ? valorMonto : item.monto, cat: cat && !cat.startsWith('deuda:') ? cat : D.sugerirCorreo(E, item) };
+    ui.dividir = { base, correo: item };
+    abrirDialogo(formDividir(base));
+  },
+  pagoComp: v => {
+    const [sentido, p, moneda] = v.split('|'), persona = decodeURIComponent(p);
+    const s = D.saldosCompartidas(E).find(x => x.sentido === sentido && x.moneda === moneda && x.persona === persona);
+    abrirDialogo(`<h2>${sentido === 'meDeben' ? `${esc(persona)} te pagó` : `Le pagaste a ${esc(persona)}`}</h2>
+      <form data-f="pagoComp" data-v="${esc(v)}" class="form-col">
+      <p class="sec">${sentido === 'meDeben' ? 'Te debe' : 'Le debés'} ${monto(s?.saldo || 0, moneda)}. Este pago no cuenta como ${sentido === 'meDeben' ? 'ingreso' : 'gasto'}.</p>
+      <div class="fila"><input name="monto" inputmode="decimal" value="${D.numPlano(s?.saldo || 0, moneda)}" required aria-label="Monto"><span class="moneda-fija">${moneda === 'USD' ? '$' : '₡'}</span></div>
+      <select name="medio" aria-label="Medio">${D.MEDIOS.map(x => `<option ${x === 'SINPE' ? 'selected' : ''}>${x}</option>`).join('')}</select>
+      <input name="fecha" type="date" value="${D.hoy()}" required aria-label="Fecha"><button class="btn">Guardar</button></form>`);
+  },
+  borrarComp: v => {
+    const c = E.compartidas[v];
+    if (!confirm(c.clase === 'abono' ? '¿Borrar este pago? También se borra el movimiento del pago.' : '¿Borrar esta parte de la cuenta?')) return;
+    cambiar(() => { D.quitar(E, 'compartidas', v); if (c.clase === 'abono' && c.movId) D.quitar(E, 'movs', c.movId); });
+  },
   confirmarMov: v => { cambiar(() => D.confirmarMov(E, E.movs[v])); aviso('Confirmado'); },
   nuevoRec: v => abrirDialogo(formRec({ clase: v })),
   editarRec: v => abrirDialogo(formRec(E.recurrentes[v])),
@@ -849,6 +951,20 @@ const ACC = {
   },
 };
 
+// Lee el formulario de movimiento; null si el monto no sirve.
+function movDeForm(f) {
+  const tipo = f.tipo.value, valor = D.parseMonto(f.monto.value);
+  if (!(valor > 0)) { aviso('Escribí un monto válido'); return null; }
+  const id = f.dataset.id || D.nuevoId(), previo = E.movs[id] || {};
+  const m = { ...previo, id, tipo, monto: valor, moneda: f.moneda.value, fecha: f.fecha.value || D.hoy(), medio: f.medio.value,
+    quien: f.quien.value.trim(), nota: f.nota.value.trim(), cat: tipo === 'gasto' ? f.cat.value : null,
+    fuente: tipo === 'ingreso' ? f.fuente.value : null, origen: previo.origen || 'manual', estado: 'ok' };
+  if (previo.reembolso) { m.cat = m.fuente = null; } // sigue siendo el pago de una cuenta compartida
+  m.tc = D.tcDe(E, m.fecha);
+  ui.ult = { moneda: m.moneda, medio: m.medio };
+  return m;
+}
+
 // Guardar un tipo de cambio manual también corrige los movimientos de esa fecha.
 function recalcularTc(fecha) {
   const tc = D.tcDe(E, fecha);
@@ -878,17 +994,36 @@ const FORM = {
     aviso('Respaldo cargado y combinado con tus datos');
   },
   mov: f => {
-    const tipo = f.tipo.value, valor = D.parseMonto(f.monto.value);
-    if (!(valor > 0)) return aviso('Escribí un monto válido');
-    const id = f.dataset.id || D.nuevoId(), previo = E.movs[id] || {};
-    const m = { ...previo, id, tipo, monto: valor, moneda: f.moneda.value, fecha: f.fecha.value || D.hoy(), medio: f.medio.value,
-      quien: f.quien.value.trim(), nota: f.nota.value.trim(), cat: tipo === 'gasto' ? f.cat.value : null,
-      fuente: tipo === 'ingreso' ? f.fuente.value : null, origen: previo.origen || 'manual', estado: 'ok' };
-    m.tc = D.tcDe(E, m.fecha);
-    ui.ult = { moneda: m.moneda, medio: m.medio };
+    const m = movDeForm(f);
+    if (!m) return;
+    const previo = E.movs[m.id];
     if (dlg.open) dlg.close();
-    cambiar(() => D.poner(E, 'movs', m));
-    aviso(previo.id ? 'Cambios guardados' : 'Movimiento guardado');
+    cambiar(() => {
+      D.poner(E, 'movs', m);
+      const ab = E.compartidas[`a-${m.id}`]; // si es el pago de una cuenta compartida, el abono cambia con él
+      if (m.reembolso && ab && !ab.del) D.poner(E, 'compartidas', { ...ab, monto: m.monto, moneda: m.moneda, fecha: m.fecha, tc: m.tc });
+    });
+    aviso(previo ? 'Cambios guardados' : 'Movimiento guardado');
+  },
+  dividir: f => {
+    const b = ui.dividir, r = b && D.repartir(b.base.monto, b.base.moneda, leerDividir(f));
+    if (!b) return dlg.close();
+    if (r.error) return aviso(r.error);
+    dlg.close(); ui.dividir = null;
+    cambiar(() => {
+      const mov = b.correo ? D.aplicarRevision(E, b.correo, { monto: b.base.monto, valor: b.base.cat }) : D.poner(E, 'movs', b.base);
+      D.guardarDividido(E, mov, r);
+    });
+    aviso(r.yo ? `Listo: tu parte es ${monto(r.mia, b.base.moneda)} y el resto quedó en "Me deben"` : `Listo: tu parte quedó como gasto y en "Debo"`);
+  },
+  pagoComp: f => {
+    const [sentido, p, moneda] = f.dataset.v.split('|'), persona = decodeURIComponent(p), valor = D.parseMonto(f.monto.value);
+    const s = D.saldosCompartidas(E).find(x => x.sentido === sentido && x.moneda === moneda && x.persona === persona);
+    if (!(valor > 0)) return aviso('Escribí un monto válido');
+    if (s && valor > s.saldo + 0.5) return aviso(`Es más de lo que ${sentido === 'meDeben' ? 'te debe' : 'le debés'} (${monto(s.saldo, moneda)})`);
+    dlg.close();
+    cambiar(() => D.pagarCompartida(E, sentido, persona, { monto: valor, moneda, fecha: f.fecha.value, medio: f.medio.value }));
+    aviso('Pago anotado');
   },
   rec: f => {
     const valor = D.parseMonto(f.monto.value), frec = f.frecuencia.value, ing = f.dataset.clase === 'ingreso';
@@ -973,7 +1108,7 @@ const FORM = {
 // ---------------- Eventos ----------------
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-a]');
-  if (b && !b.disabled) { e.preventDefault(); ACC[b.dataset.a]?.(b.dataset.v); }
+  if (b && !b.disabled) { e.preventDefault(); ACC[b.dataset.a]?.(b.dataset.v, b); }
 });
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 document.addEventListener('submit', e => {
@@ -994,7 +1129,9 @@ document.addEventListener('change', e => {
 });
 document.addEventListener('input', e => {
   const t = e.target;
-  if (t.dataset.vivo) { ui[t.dataset.vivo] = t.value; foco = t.dataset.vivo; render(); }
+  const fd = t.closest?.('form[data-f=dividir]');
+  if (fd && ui.dividir) actualizarDividir(fd, t);
+  else if (t.dataset.vivo) { ui[t.dataset.vivo] = t.value; foco = t.dataset.vivo; render(); }
 });
 
 // Montos al pasar el mouse o tocar
