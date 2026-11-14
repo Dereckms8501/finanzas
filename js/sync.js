@@ -67,7 +67,9 @@ export async function bajar(cfg) {
 
 // Devuelve true si se guardó, false si alguien lo cambió mientras tanto (hay que bajar y combinar otra vez).
 async function subir(cfg, sobre, sha) {
-  const body = { message: 'Actualizar estado cifrado', content: C.b64(enc.encode(JSON.stringify(sobre))) };
+  // Sin "committer", GitHub firma el commit con el correo principal de la cuenta: así no queda el correo en el historial.
+  const firma = { name: 'App Finanzas', email: 'app-finanzas@users.noreply.github.com' };
+  const body = { message: 'Actualizar estado cifrado', content: C.b64(enc.encode(JSON.stringify(sobre))), committer: firma, author: firma };
   if (sha) body.sha = sha;
   const r = await pedir(cfg, `/contents/${ARCHIVO}`, { method: 'PUT', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } });
   if (r.status === 409 || r.status === 422) return false;

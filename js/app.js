@@ -649,6 +649,8 @@ function vCalendario() {
 
 // ---------------- Metas ----------------
 const detAbonos = ab => ab.length ? `<details><summary>Abonos (${ab.length})</summary>${ab.slice().reverse().map(a => `<div class="mini"><span>${D.fechaCorta(a.fecha)}</span><span>${monto(a.monto, a.moneda)}</span><button class="ico-btn chico" data-a="borrarAbono" data-v="${a.id}" aria-label="Borrar abono">${icono('basura')}</button></div>`).join('')}</details>` : '';
+// 1 − 0,8 da 0,19999… en la compu: sin el margen, 20 % se mostraba como 19 %
+const pctTxt = p => Math.floor(p * 100 + 1e-9);
 const mesesTxt = n => { const r = Math.floor(n * 10) / 10; return `${r.toLocaleString('es-CR')} ${r === 1 ? 'mes' : 'meses'}`; };
 function tarjetaFondo() {
   const f = E.metas[D.ID_FONDO];
@@ -656,7 +658,7 @@ function tarjetaFondo() {
     <p class="nota">Plata apartada solo para imprevistos: una cita médica, una reparación o quedarte sin ingresos un tiempo. Lo usual es juntar entre 3 y 6 meses de lo que gastás.</p>
     <div class="acciones"><button class="btn chico" data-a="crearFondo">${icono('mas')} Crear fondo</button></div></div>`;
   const s = D.estadoFondo(E);
-  return `<div class="tarjeta meta"><div class="cab"><h2>Fondo de emergencia</h2><span class="pct">${Math.floor(s.pct * 100)} %</span></div>
+  return `<div class="tarjeta meta"><div class="cab"><h2>Fondo de emergencia</h2><span class="pct">${pctTxt(s.pct)} %</span></div>
     <div class="barra"><i class="verde" style="width:${(s.pct * 100).toFixed(1)}%"></i></div>
     <p>Tenés <strong>${crc(s.saldo)}</strong>${s.promedio > 0 ? `: te alcanza para <strong>${mesesTxt(s.meses)}</strong> de gastos` : ''}.</p>
     <p class="sec">${s.promedio > 0 ? `Gastás en promedio ${crc(s.promedio)} al mes, así que ${s.mesesObjetivo} meses son ${crc(s.objetivo)}.` : 'Cuando tengas gastos anotados te digo cuántos meses te cubre.'}</p>
@@ -691,7 +693,7 @@ function vMetas() {
   ${metas.length ? '' : '<p class="vacio">Todavía no tenés otras metas. Creá una para ahorrar con un objetivo.</p>'}
   <div class="rejilla">${metas.map(m => {
     const s = D.estadoMeta(E, m), ab = D.abonosMeta(E, m.id);
-    return `<div class="tarjeta meta"><div class="cab"><h2>${esc(m.nombre)}</h2><span class="pct">${Math.floor(s.pct * 100)} %</span></div>
+    return `<div class="tarjeta meta"><div class="cab"><h2>${esc(m.nombre)}</h2><span class="pct">${pctTxt(s.pct)} %</span></div>
       <div class="barra"><i class="sakura" style="width:${(s.pct * 100).toFixed(1)}%"></i></div>
       <p>${monto(s.ahorrado, m.moneda)} de ${monto(m.objetivo, m.moneda)}${s.falta > 0 ? ` · faltan ${monto(s.falta, m.moneda)}` : ' · <span class="txt-verde">¡meta cumplida!</span>'}</p>
       ${m.limite ? `<p class="sec">Fecha límite: ${D.fechaLarga(m.limite)}${s.porMes ? ` · necesitás ${monto(s.porMes, m.moneda)} por mes` : ''}</p>` : ''}
@@ -715,7 +717,7 @@ function vDeudas() {
     const puntos = [{ et: D.fechaCorta(d.inicio), valor: d.total, tip: `${D.fechaCorta(d.inicio)}: ${monto(d.total, d.moneda)}` },
       ...pagos.map(p => { acumulado = Math.max(0, acumulado - p.monto); return { et: D.fechaCorta(p.fecha), valor: acumulado, tip: `${D.fechaCorta(p.fecha)}: ${monto(acumulado, d.moneda)}` }; })];
     const pct = d.total ? 1 - saldo / d.total : 0;
-    return `<div class="tarjeta deuda"><div class="cab"><h2>${esc(d.acreedor)}</h2><span class="pct">${Math.floor(pct * 100)} % pagado</span></div>
+    return `<div class="tarjeta deuda"><div class="cab"><h2>${esc(d.acreedor)}</h2><span class="pct">${pctTxt(pct)} % pagado</span></div>
       <div class="barra"><i class="verde" style="width:${(pct * 100).toFixed(1)}%"></i></div>
       <p>Saldo pendiente: <strong>${monto(saldo, d.moneda)}</strong> de ${monto(d.total, d.moneda)}</p>
       <p class="sec">Cuota ${monto(d.cuota, d.moneda)} el día ${d.dia} de cada mes${d.tasa ? ` · interés ${String(d.tasa).replace('.', ',')} % anual` : ''}</p>
