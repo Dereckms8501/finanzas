@@ -36,9 +36,9 @@ export async function probarRepo(cfg) {
   if (!r.ok) throw new ErrorSync('github', `GitHub respondió con un error (${r.status}).`);
 }
 
-// Devuelve {sha, sobre} o null si todavía no hay archivo.
-export async function bajar(cfg) {
-  const r = await pedir(cfg, `/contents/${ARCHIVO}`);
+// Devuelve {sha, texto} o null si el archivo no existe.
+async function bajarArchivo(cfg, nombre) {
+  const r = await pedir(cfg, `/contents/${nombre}`);
   if (r.status === 404) return null;
   if (!r.ok) throw new ErrorSync('github', `GitHub respondió con un error (${r.status}).`);
   const j = await r.json();
@@ -48,7 +48,20 @@ export async function bajar(cfg) {
     if (!r2.ok) throw new ErrorSync('github', `GitHub respondió con un error (${r2.status}).`);
     b64 = (await r2.json()).content;
   }
-  try { return { sha: j.sha, sobre: JSON.parse(dec.decode(C.deb64(b64.replace(/\s/g, '')))) }; }
+  return { sha: j.sha, texto: dec.decode(C.deb64(b64.replace(/\s/g, ''))) };
+}
+// JSON de un archivo del repositorio (correo.enc, tipo_cambio.json) o null si no existe.
+export async function bajarJSON(cfg, nombre) {
+  const a = await bajarArchivo(cfg, nombre);
+  if (!a) return null;
+  try { return JSON.parse(a.texto); } catch { throw new ErrorSync('formato', `El archivo ${nombre} en GitHub está dañado.`); }
+}
+
+// Devuelve {sha, sobre} o null si todavía no hay archivo.
+export async function bajar(cfg) {
+  const a = await bajarArchivo(cfg, ARCHIVO);
+  if (!a) return null;
+  try { return { sha: a.sha, sobre: JSON.parse(a.texto) }; }
   catch { throw new ErrorSync('formato', 'El archivo en GitHub está dañado.'); }
 }
 

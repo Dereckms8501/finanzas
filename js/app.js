@@ -16,6 +16,8 @@ let cfgSync = null; // {token, repo} descifrado, solo en memoria mientras la app
 const sync = { enCurso: false, pendiente: false, error: '', cambios: 0, hecho: 0, promesa: null };
 let traer = null;   // datos bajados de GitHub en "Ya tengo datos", antes de poner la contraseña
 let respaldo = null; // respaldo leído, esperando su contraseña
+let correo = null;   // lista descifrada de correo.enc (solo en memoria): {generado, movs}
+const lector = { ultimo: 0, error: '', avisados: 0, sinArchivo: false };
 const ui = { tab: 'inicio', mes: D.mesDe(D.hoy()), vistaMov: 'lista', fCat: '', fMedio: '', qSinpe: '', q: '', anim: true, ult: { moneda: 'CRC', medio: 'Tarjeta' } };
 let accion = new URLSearchParams(location.search).get('accion');
 
@@ -66,6 +68,7 @@ async function sincronizar(manual) {
     await guardarMeta(); await guardarYa();
     if (manual) aviso('Sincronizado');
     if (S.huella(E) !== antes || ui.tab === 'ajustes') { if (!ocupado()) render(); }
+    traerCorreo(manual);
   } catch (e) {
     sync.error = e.message;
     if (manual || e.tipo !== 'red') aviso(e.message);
@@ -76,6 +79,31 @@ async function sincronizar(manual) {
   }
 }
 addEventListener('online', () => sincronizarAhora());
+
+// ---------------- Correo y tipo de cambio (los escribe el Action en finanzas-datos) ----------------
+async function traerCorreo(manual = false) {
+  if (!cfgSync || !mk || (!manual && Date.now() - lector.ultimo < 120e3)) return;
+  lector.ultimo = Date.now();
+  const antes = D.pendientesCorreo(E, correo?.movs).length;
+  try {
+    const tabla = await S.bajarJSON(cfgSync, 'tipo_cambio.json');
+    if (mk && tabla) { const nuevas = D.agregarTcAuto(E, tabla); if (nuevas.length) { nuevas.forEach(recalcularTc); guardar(); } }
+    const llave = E?.llaves.correo;
+    if (mk && llave && !llave.del) {
+      const sobre = await S.bajarJSON(cfgSync, 'correo.enc');
+      lector.sinArchivo = !sobre;
+      if (sobre && mk) correo = await C.abrirCorreo(llave.priv, sobre);
+    }
+    lector.error = '';
+  } catch (e) {
+    lector.error = e instanceof S.ErrorSync ? e.message : 'No pude abrir los movimientos del correo. ¿La llave pública en GitHub es la de esta app?';
+  }
+  if (!mk) return;
+  const n = D.pendientesCorreo(E, correo?.movs).length;
+  if (n && n > lector.avisados) aviso(`Tenés ${n} ${n === 1 ? 'movimiento nuevo' : 'movimientos nuevos'} del correo`);
+  lector.avisados = n;
+  if ((n !== antes || ['movs', 'correo', 'ajustes'].includes(ui.tab)) && !ocupado()) render();
+}
 
 function hace(ms) {
   const min = Math.round((Date.now() - ms) / 60000);
@@ -151,7 +179,7 @@ async function bloquear() {
   await guardarYa();
   clearTimeout(tSync);
   if (cfgSync) { await sync.promesa; if (sync.cambios !== sync.hecho) await sincronizarAhora(); } // sube lo último antes de olvidar la llave
-  mk = null; E = null; cfgSync = null; errorBloqueo = '';
+  mk = null; E = null; cfgSync = null; errorBloqueo = ''; correo = null; lector.ultimo = lector.avisados = 0;
   if (dlg.open) dlg.close();
   if (hayVersionNueva) { sessionStorage.setItem('versionNueva', '1'); return location.reload(); }
   ui.tab = 'inicio';
@@ -177,13 +205,13 @@ async function abrirFaceID() {
   catch { mk = null; errorBloqueo = 'No se pudo usar Face ID. Usá la contraseña.'; render(); }
 }
 async function cargarEstado() {
-  E = await C.descifrar(mk, await D.leer('estado'));
+  E = D.completar(await C.descifrar(mk, await D.leer('estado')));
   cfgSync = meta.sync ? await C.descifrar(mk, meta.sync) : null;
   sync.cambios = sync.hecho = 0;
   errorBloqueo = ''; ultimo = Date.now();
   sincronizarAhora();
   if (accion) {
-    ui.tab = { gasto: 'movs', presupuesto: 'presup', correo: 'movs' }[accion] || 'inicio';
+    ui.tab = { gasto: 'movs', presupuesto: 'presup', correo: 'correo' }[accion] || 'inicio';
     accion = null; history.replaceState(null, '', location.pathname);
   }
   ui.anim = true; render();
@@ -196,6 +224,7 @@ async function crear(f) {
   const btn = f.querySelector('button.btn'); btn.disabled = true; btn.textContent = 'Creando…';
   mk = await C.nuevaLlaveMaestra();
   E = D.estadoNuevo(f.nombre.value.trim(), tc);
+  D.poner(E, 'llaves', { id: 'correo', ...(await C.nuevoParCorreo()) }); // par de llaves para los correos
   await guardarYa(); // primero los datos, después la llave: así nunca queda una llave sin datos
   meta = { pass: await C.envolverConContrasena(mk, f.pass.value), fallos: 0, hasta: 0, tema: 'auto' };
   await guardarMeta();
@@ -227,7 +256,7 @@ async function traerClave(f) {
     await new Promise(r => setTimeout(r, 60e3));
     errorBloqueo = ''; return render();
   }
-  E = await C.descifrar(mk, traer.sobre.datos);
+  E = D.completar(await C.descifrar(mk, traer.sobre.datos));
   await guardarYa();
   meta = { pass: traer.sobre.llave, fallos: 0, hasta: 0, tema: 'auto', sync: await C.cifrar(mk, traer.cfg), ultimaSync: Date.now() };
   await guardarMeta();
@@ -316,7 +345,7 @@ function vBloqueo() {
 const TABS = [['inicio', 'Inicio', 'casa'], ['presup', 'Presupuesto', 'pastel'], ['movs', 'Movimientos', 'lista'], ['metas', 'Metas', 'diana'], ['deudas', 'Deudas', 'recibo']];
 function vApp() {
   const info = D.tcInfo(E, D.hoy()), al = alertasVisibles();
-  const vistas = { inicio: vInicio, presup: vPresup, movs: vMovs, metas: vMetas, deudas: vDeudas, ajustes: vAjustes, buscar: vBuscar };
+  const vistas = { inicio: vInicio, presup: vPresup, movs: vMovs, metas: vMetas, deudas: vDeudas, ajustes: vAjustes, buscar: vBuscar, correo: vCorreo };
   return `<div class="app">
   <header class="top">
     <span class="marca">Finanzas</span>
@@ -437,8 +466,7 @@ function vMovs() {
   return `${pest}
   <div class="rejilla movs-rej">
     <div class="tarjeta"><h2>Nuevo movimiento</h2>${formMov()}
-      <button class="btn sec-btn ancho" disabled title="Se activa en la etapa 3">${icono('correo')} Revisar movimientos del correo</button>
-      <p class="nota">El botón del correo se activa cuando conectemos tu Gmail.</p></div>
+      ${botonCorreo()}</div>
     <div class="tarjeta">${selMes()}
       <div class="filtros"><select data-filtro="fCat" aria-label="Filtrar por categoría"><option value="">Todas las categorías</option>${D.cats(E).map(c => `<option value="${c.id}" ${ui.fCat === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}</select>
       <select data-filtro="fMedio" aria-label="Filtrar por medio"><option value="">Todos los medios</option>${D.MEDIOS.map(x => `<option ${ui.fMedio === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
@@ -521,7 +549,8 @@ function vAjustes() {
   <div class="tarjeta"><h2>Tipo de cambio</h2>
     <p>Hoy: <strong>${info ? D.tcFmt(info.valor) : '—'}</strong> <span class="sec">${info ? `(${info.fuente}, ${D.fechaLarga(info.fecha)})` : ''}</span></p>
     <label>Usar el de <select data-ajuste="tcTipo"><option value="venta" ${a.tcTipo !== 'compra' ? 'selected' : ''}>venta</option><option value="compra" ${a.tcTipo === 'compra' ? 'selected' : ''}>compra</option></select></label>
-    <p class="nota">La actualización automática con el dato del BCCR llega en la etapa 3. Mientras tanto, o si falla, escribilo a mano:</p>
+    ${info?.fuente === 'BCCR' && info.fecha < D.hoy() ? `<p class="txt-rojo">El dato automático más reciente es del ${D.fechaLarga(info.fecha)}.</p>` : ''}
+    <p class="nota">Se actualiza solo cada día con el dato oficial del BCCR. Si querés usar otro valor, escribilo a mano:</p>
     <form data-f="tcManual" class="fila"><input name="fecha" type="date" value="${D.hoy()}" aria-label="Fecha"><input name="valor" inputmode="decimal" placeholder="₡ por $1" required aria-label="Valor"><button class="btn">Guardar</button></form>
     ${manuales.slice(0, 6).map(t => `<div class="mini"><span>${D.fechaLarga(t.id)}</span><span>${D.tcFmt(t.valor)}</span><button class="ico-btn chico" data-a="borrarTc" data-v="${t.id}" aria-label="Borrar">${icono('basura')}</button></div>`).join('')}</div>
 
@@ -555,6 +584,8 @@ function vAjustes() {
       <input name="repo" required value="${esc(cfgSync?.repo || S.repoSugerido())}" placeholder="usuario/finanzas-datos" autocomplete="off" spellcheck="false" autocapitalize="off" aria-label="Repositorio">
       <button class="btn">Conectar</button></form>`}</div>
 
+  ${tarjetaLector()}
+
   <div class="tarjeta"><h2>Respaldo</h2>
     <p class="nota">Un archivo cifrado con todos tus datos. Para cargarlo vas a necesitar la contraseña que tenías cuando lo descargaste.</p>
     <div class="acciones"><button class="btn sec-btn" data-a="descargarRespaldo">Descargar respaldo</button>
@@ -564,6 +595,62 @@ function vAjustes() {
     <p class="nota">Borra todos los datos guardados en este navegador. No se puede deshacer.</p>
     <button class="btn peligro" data-a="borrarTodo">Borrar todo de este dispositivo</button></div>
   </div>`;
+}
+
+// ---------------- Correo ----------------
+const pendientes = () => D.pendientesCorreo(E, correo?.movs).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+function botonCorreo() {
+  const llave = E.llaves.correo, n = pendientes().length;
+  if (!llave || llave.del) return `<p class="nota">Para que tus compras se anoten solas desde el correo, creá la llave en Ajustes, en "Lector de correos".</p>`;
+  return `<button class="btn ${n ? '' : 'sec-btn'} ancho" data-a="tab" data-v="correo">${icono('correo')} Revisar movimientos del correo${n ? ` <span class="globo">${n}</span>` : ''}</button>`;
+}
+
+function filaRevision(m) {
+  if (m.noReconocido) return `<div class="rev no-rec"><div class="txt"><b>No pude leer este correo</b>
+    <span class="sec">${m.fecha ? D.fechaCorta(m.fecha) + ' · ' : ''}${esc(m.remitente)}</span><span class="sec">"${esc(m.asunto)}"</span>
+    <span class="nota">Si era un movimiento, anotalo a mano. Al confirmar se quita de esta lista.</span></div></div>`;
+  const ing = m.tipo === 'ingreso', sug = D.sugerirCorreo(E, m);
+  const chips = [m.origen === 'siri' ? 'desde Siri' : 'desde correo', m.confirmar ? '¿viaje o Uber Eats? revisá la categoría' : ''].filter(Boolean);
+  const sel = ing
+    ? `<select name="valor|${m.id}" aria-label="Fuente del ingreso">${Object.entries(D.FUENTES).map(([k, v]) => `<option value="${k}" ${sug === k ? 'selected' : ''}>${v}</option>`).join('')}</select>`
+    : `<select name="valor|${m.id}" aria-label="Categoría">${D.cats(E).map(c => `<option value="${c.id}" ${sug === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}</select>`;
+  return `<div class="rev ${m.confirmar ? 'confirmar' : ''}">
+    <div class="txt"><b>${esc(m.quien || (ing ? 'SINPE recibido' : m.medio === 'SINPE' ? 'SINPE enviado' : 'Gasto'))}</b>
+      <span class="sec">${[m.fecha ? D.fechaCorta(m.fecha) : '', m.hora, ing ? 'Ingreso' : 'Gasto', m.medio].filter(Boolean).map(esc).join(' · ')}</span>
+      ${m.nota ? `<span class="sec">${esc(m.nota)}</span>` : ''}
+      <span>${chips.map(c => `<span class="chip">${esc(c)}</span>`).join(' ')}</span></div>
+    <div class="campos"><div class="fila"><input name="monto|${m.id}" inputmode="decimal" value="${D.numPlano(m.monto, m.moneda)}" aria-label="Monto">
+      <span class="moneda-fija">${m.moneda === 'USD' ? '$' : '₡'}</span></div>${sel}
+      <label class="check"><input type="checkbox" name="descartar|${m.id}"> Descartar</label></div></div>`;
+}
+
+function vCorreo() {
+  const lista = pendientes(), llave = E.llaves.correo;
+  const estado = !cfgSync ? 'Conectá primero la sincronización con GitHub (en Ajustes).'
+    : !llave || llave.del ? 'Falta crear la llave para los correos (en Ajustes, "Lector de correos").'
+    : lector.error ? lector.error
+    : lector.sinArchivo ? 'Todavía no hay correos leídos. Cuando el lector corra por primera vez, aparecen aquí.'
+    : correo ? `Última lectura del correo: ${hace(Date.parse(correo.generado))}` : 'Buscando…';
+  return `<div class="cab"><h1>Revisar movimientos del correo</h1><button class="btn sec-btn chico" data-a="actualizarCorreo">Actualizar</button></div>
+  <p class="sec">${esc(estado)}</p>
+  ${lista.length ? `<form data-f="revisar" class="tarjeta lista-rev">
+    <p class="nota">Revisá cada uno: podés cambiar la categoría o el monto, o marcar "Descartar". Al confirmar se guardan todos juntos.</p>
+    ${lista.map(filaRevision).join('')}
+    <button class="btn ancho">Confirmar ${lista.length} ${lista.length === 1 ? 'movimiento' : 'movimientos'}</button></form>`
+    : correo ? '<p class="vacio">No hay movimientos nuevos. Todo al día.</p>' : ''}`;
+}
+
+function tarjetaLector() {
+  const llave = E.llaves.correo;
+  if (!llave || llave.del) return `<div class="tarjeta"><h2>Lector de correos</h2>
+    <p class="nota">Crea un par de llaves: la pública se pega en GitHub para que el lector cifre tus movimientos, y la privada se queda cifrada dentro de tus datos para que solo esta app los pueda abrir.</p>
+    <button class="btn" data-a="crearLlaveCorreo">Crear llave para los correos</button></div>`;
+  return `<div class="tarjeta"><h2>Lector de correos</h2>
+    <p class="nota">Llave pública: copiala y pegala en GitHub como el Secret <b>CLAVE_PUBLICA</b> del repositorio finanzas-datos. No es secreta: solo sirve para cifrar.</p>
+    <textarea readonly rows="4" class="llave" aria-label="Llave pública">${esc(llave.pub)}</textarea>
+    <div class="acciones"><button class="btn sec-btn" data-a="copiarLlave">Copiar llave pública</button></div>
+    <p class="sec">${correo ? `Última lectura del correo: ${hace(Date.parse(correo.generado))}` : lector.sinArchivo ? 'El lector todavía no ha subido nada.' : ''}</p>
+    ${lector.error ? `<p class="txt-rojo">${esc(lector.error)}</p>` : ''}</div>`;
 }
 
 // ---------------- Búsqueda ----------------
@@ -654,6 +741,17 @@ const ACC = {
     render();
   },
   quitarFaceID: async () => { delete meta.prf; await guardarMeta(); aviso('Face ID desactivado en este dispositivo'); render(); },
+  actualizarCorreo: () => traerCorreo(true),
+  crearLlaveCorreo: async () => {
+    const btn = $('[data-a=crearLlaveCorreo]'); btn.disabled = true; btn.textContent = 'Creando…';
+    const par = await C.nuevoParCorreo();
+    cambiar(() => D.poner(E, 'llaves', { id: 'correo', ...par }));
+    aviso('Llave creada. Copiá la llave pública y pegala en GitHub.');
+  },
+  copiarLlave: async () => {
+    try { await navigator.clipboard.writeText(E.llaves.correo.pub); aviso('Llave pública copiada'); }
+    catch { $('textarea.llave')?.select(); aviso('Seleccioná el texto y copialo'); }
+  },
   borrarTodo: async () => {
     if (!confirm('¿Borrar TODOS los datos de este dispositivo? No se puede deshacer.')) return;
     if (prompt('Para confirmar, escribí BORRAR') !== 'BORRAR') return;
@@ -730,6 +828,21 @@ const FORM = {
     dlg.close();
     cambiar(() => D.poner(E, 'pagos', { id: D.nuevoId(), deudaId: d.id, monto: valor, moneda: d.moneda, fecha: f.fecha.value, tc: D.tcDe(E, f.fecha.value) }));
     aviso('Pago anotado');
+  },
+  revisar: f => {
+    const lista = pendientes(), campo = (k, m) => f.elements[`${k}|${m.id}`];
+    for (const m of lista)
+      if (!m.noReconocido && !campo('descartar', m)?.checked && !(D.parseMonto(campo('monto', m)?.value) > 0)) return aviso('Hay un monto que no es válido');
+    let guardados = 0, descartados = 0;
+    cambiar(() => {
+      for (const m of lista) {
+        const r = D.aplicarRevision(E, m, { descartar: !!campo('descartar', m)?.checked, monto: D.parseMonto(campo('monto', m)?.value), valor: campo('valor', m)?.value });
+        r ? guardados++ : descartados++;
+      }
+      lector.avisados = 0; ui.tab = 'movs'; ui.anim = true;
+    });
+    scrollTo(0, 0);
+    aviso(`${guardados} ${guardados === 1 ? 'movimiento guardado' : 'movimientos guardados'}${descartados ? `, ${descartados} descartados` : ''}`);
   },
   nombre: f => { cambiar(() => D.poner(E, 'ajustes', { ...D.ajustes(E), id: 'general', nombre: f.nombre.value.trim() })); aviso('Nombre guardado'); },
   tcManual: f => {

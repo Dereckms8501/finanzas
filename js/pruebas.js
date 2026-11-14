@@ -179,5 +179,39 @@ try {
   ok('sync: en GitHub no se ve ningún dato', !/"(gym|monto|movs|Yo)"/.test(atob(repo.content)));
 } finally { globalThis.fetch = fetchReal; }
 
+// Correo: lo que cifra el Action (Python) lo abre la app (Web Crypto). prueba_correo.json lo genera
+// finanzas-datos/scripts/prueba_importar.py con una llave y datos de prueba.
+{
+  const fx = await (await fetch('js/prueba_correo.json', { cache: 'no-store' })).json();
+  const lista = await C.abrirCorreo(fx.priv, fx.sobre);
+  ok('correo: la app descifra lo que cifró Python', lista.movs.length === fx.movs, `(${lista.movs.length} de ${fx.movs})`);
+  const eats = lista.movs.find(m => m.quien === 'Uber Eats');
+  ok('correo: el cobro de Uber Eats quedó unido con su recibo', eats?.ids?.length === 2 && eats.cat === 'restaurantes');
+  ok('correo: el recibo de Uber no sale repetido', !lista.movs.some(m => m.origen === 'uber'));
+
+  const par = await C.nuevoParCorreo();
+  ok('correo: la llave pública es RSA de 4096', C.deb64(par.pub).length > 540);
+
+  const ec = D.estadoNuevo('Correo', 500);
+  const g = { id: 'x1', origen: 'bac', tipo: 'gasto', medio: 'Tarjeta', monto: 2500, moneda: 'CRC', fecha: '2026-11-10', quien: 'SODA TICA', cat: 'restaurantes' };
+  const s = { id: 'x2', origen: 'siri', tipo: 'gasto', medio: 'Efectivo', monto: 1000, moneda: 'CRC', fecha: '2026-11-10', quien: '', cat: 'gym' };
+  const i = { id: 'x3', ids: ['x3', 'x9'], origen: 'kash', tipo: 'ingreso', medio: 'SINPE', monto: 5000, moneda: 'CRC', fecha: '2026-11-11', quien: 'ANA', fuente: 'otro' };
+  const nr = { id: 'x4', noReconocido: true, remitente: 'banco', asunto: '?', fecha: '2026-11-11' };
+  ok('correo: 4 pendientes', D.pendientesCorreo(ec, [g, s, i, nr]).length === 4);
+  ok('correo: categoría por nombre (Siri)', D.sugerirCorreo(ec, { ...s, cat: 'Gym' }) === 'gym');
+  const mov = D.aplicarRevision(ec, g, { monto: 2600, valor: 'supermercados' });
+  ok('correo: se guarda con el monto editado y la marca "desde correo"', mov.monto === 2600 && mov.origen === 'correo' && mov.cat === 'supermercados');
+  ok('correo: aprendió la categoría del comercio', D.sugerirCorreo(ec, { ...g, id: 'x5' }) === 'supermercados');
+  ok('correo: lo de Siri lleva su marca', D.aplicarRevision(ec, s, { valor: 'gym' }).origen === 'siri');
+  ok('correo: descartar no crea movimiento', D.aplicarRevision(ec, i, { descartar: true }) === null && !ec.movs['c-x3']);
+  ok('correo: un correo con dos IDs queda revisado por cualquiera', D.revisado(ec, { id: 'x9' }));
+  D.aplicarRevision(ec, nr, {});
+  ok('correo: nada vuelve a aparecer', D.pendientesCorreo(ec, [g, s, i, nr]).length === 0);
+  ok('correo: nunca se importa dos veces (mismo id)', D.lista(ec, 'movs').filter(m => m.correoId === 'x1').length === 1);
+  const nuevas = D.agregarTcAuto(ec, { '2026-11-12': { compra: 440, venta: 450 }, '2026-11-13': { compra: 0, venta: 451 } });
+  ok('tipo de cambio automático: solo fechas válidas', nuevas.join() === '2026-11-12' && D.tcDe(ec, '2026-11-12') === 450);
+  ok('tipo de cambio: el manual le gana al automático', (D.poner(ec, 'tcManual', { id: '2026-11-12', valor: 455 }), D.tcDe(ec, '2026-11-12') === 455));
+}
+
 document.getElementById('fin').innerHTML = fallos ? `<b class="mal">${fallos} prueba(s) fallaron</b>` : '<b class="ok">Todo bien</b>';
 window.resultadoPruebas = fallos;

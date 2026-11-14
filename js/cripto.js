@@ -81,3 +81,19 @@ export async function activarFaceID(mk, nombre) {
 export async function abrirConFaceID(w) {
   return desenvolver(w, await claveDePRF(await pedirPRF(deb64(w.credId), deb64(w.sal))));
 }
+
+// ---- Llaves para los correos (cifrado híbrido RSA-OAEP 4096 + AES-256-GCM) ----
+// El Action solo tiene la llave pública: puede cifrar pero no leer. La privada vive dentro de los datos cifrados.
+const RSA = { name: 'RSA-OAEP', hash: 'SHA-256' };
+export async function nuevoParCorreo() {
+  const par = await crypto.subtle.generateKey({ ...RSA, modulusLength: 4096, publicExponent: new Uint8Array([1, 0, 1]) }, true, ['encrypt', 'decrypt']);
+  return { pub: b64(await crypto.subtle.exportKey('spki', par.publicKey)), priv: b64(await crypto.subtle.exportKey('pkcs8', par.privateKey)) };
+}
+// sobre = {v, alg, llave (AES envuelta con RSA), iv, datos} tal como lo escribe scripts/importar_correos.py
+export async function abrirCorreo(privB64, sobre) {
+  const priv = await crypto.subtle.importKey('pkcs8', deb64(privB64), RSA, false, ['decrypt']);
+  const crudo = await crypto.subtle.decrypt(RSA, priv, deb64(sobre.llave));
+  const llave = await crypto.subtle.importKey('raw', crudo, 'AES-GCM', false, ['decrypt']);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: deb64(sobre.iv) }, llave, deb64(sobre.datos));
+  return JSON.parse(dec.decode(pt));
+}

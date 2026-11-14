@@ -195,6 +195,22 @@ label.check input { width: 20px; min-height: 20px; }
 .mov .m .sec { display: block; font-size: 12px; font-weight: 400; }
 .pos { color: var(--exito); }
 .chip { font-size: 11px; padding: 0 6px; border: 1px solid var(--borde); border-radius: 999px; color: var(--texto2); white-space: nowrap; }
+/* Revisión del correo */
+.rev { display: grid; grid-template-columns: 1fr; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--borde); }
+.rev:last-of-type { border-bottom: 0; margin-bottom: 12px; }
+.rev .txt { display: flex; flex-direction: column; min-width: 0; }
+.rev .txt b { font-weight: 500; overflow-wrap: anywhere; }
+.rev .txt .sec { font-size: 13px; }
+.rev .campos { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.rev .campos .fila { margin: 0; }
+.rev .chip { white-space: normal; }
+.rev.confirmar { border-left: 3px solid var(--aviso); padding-left: 10px; }
+.rev.no-rec .nota { margin: 4px 0 0; }
+@media (max-width: 560px) { .rev .campos { grid-template-columns: 1fr 1fr; } .rev .campos label.check { grid-column: 1 / -1; } }
+.globo { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; margin-left: 6px; border-radius: 999px;
+  background: var(--acento); color: #2B2B2B; font-size: 13px; font-weight: 600; }
+textarea.llave { width: 100%; font: 12px/1.4 ui-monospace, Consolas, monospace; word-break: break-all; resize: vertical;
+  background: var(--fondo); color: var(--texto); border: 1px solid var(--borde); border-radius: 6px; padding: 8px; }
 
 .fila-cat { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--borde); }
 .fila-cat:last-child { border-bottom: 0; }

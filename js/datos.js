@@ -21,7 +21,8 @@ export const escribir = (k, v) => tx('readwrite', s => s.put(v, k));
 export const borrarTodo = () => tx('readwrite', s => s.clear());
 
 // ---------- Modelo ----------
-export const COLECCIONES = ['movs', 'cats', 'presup', 'metas', 'abonos', 'deudas', 'pagos', 'tcManual', 'tcAuto', 'ajustes', 'alertasCerradas'];
+export const COLECCIONES = ['movs', 'cats', 'presup', 'metas', 'abonos', 'deudas', 'pagos', 'tcManual', 'tcAuto', 'ajustes', 'alertasCerradas',
+  'revisados', 'reglas', 'llaves'];
 export const CATS_BASE = [
   ['supermercados', 'Supermercados', 'carrito', '#165E83'],
   ['restaurantes', 'Restaurantes', 'plato', '#F4B3C2'],
@@ -43,6 +44,7 @@ export function estadoNuevo(nombre, tc) {
   if (tc > 0) poner(e, 'tcManual', { id: hoy(), valor: tc });
   return e;
 }
+export function completar(e) { for (const c of COLECCIONES) e[c] ||= {}; return e; } // datos guardados con una versión anterior
 export function poner(e, col, item) { item.upd = Date.now(); delete item.del; e[col][item.id] = item; return item; }
 export function quitar(e, col, id) { const it = e[col][id]; if (it) { it.del = true; it.upd = Date.now(); } }
 export const lista = (e, col) => Object.values(e[col] || {}).filter(x => !x.del);
@@ -230,4 +232,50 @@ export function alertas(e, h = hoy()) {
       out.push({ clave: `meta|${m.id}|${mes}`, nivel: 'amarillo', texto: `Meta "${m.nombre}" va atrasada: deberías llevar ${monto(s.esperado, m.moneda)} y llevás ${monto(s.ahorrado, m.moneda)}` });
   }
   return out.filter(a => !e.alertasCerradas[a.clave] || e.alertasCerradas[a.clave].del);
+}
+
+// ---------- Movimientos del correo ----------
+// El Action manda {id, ids?, origen, tipo, medio, monto, moneda, fecha, hora, quien, nota, cat, fuente, confirmar}
+// o {id, noReconocido, remitente, asunto, fecha}. Aquí se decide qué falta revisar y qué sugerir.
+export const claveRegla = (tipo, quien) => `${tipo === 'ingreso' ? 'i' : 'g'}|${String(quien || '').toUpperCase().replace(/\s+/g, ' ').trim()}`;
+const idsCorreo = m => m.ids || [m.id];
+export const revisado = (e, m) => idsCorreo(m).some(id => e.revisados[id] && !e.revisados[id].del);
+export const pendientesCorreo = (e, movs) => (movs || []).filter(m => !revisado(e, m));
+
+// Sugerencia del Action (o el nombre de categoría que vino de Siri), con las reglas aprendidas encima.
+function sugerenciaBase(e, m) {
+  if (m.tipo === 'ingreso') return m.fuente && FUENTES[m.fuente] ? m.fuente : 'otro';
+  if (m.cat && e.cats[m.cat] && !e.cats[m.cat].del) return m.cat;
+  const n = String(m.cat || '').trim().toLowerCase();
+  return cats(e).find(c => c.nombre.toLowerCase() === n)?.id || 'otros';
+}
+export function sugerirCorreo(e, m) {
+  const regla = m.quien ? e.reglas[claveRegla(m.tipo, m.quien)] : null;
+  const valido = regla && !regla.del && (m.tipo === 'ingreso' ? FUENTES[regla.valor] : e.cats[regla.valor] && !e.cats[regla.valor].del);
+  return valido ? regla.valor : sugerenciaBase(e, m);
+}
+
+// Aplica la revisión: {descartar, monto, valor (cat o fuente)}. Devuelve el movimiento creado o null.
+export function aplicarRevision(e, m, { descartar, monto, valor }) {
+  const accion = descartar || m.noReconocido ? 'descartado' : 'aceptado';
+  for (const id of idsCorreo(m)) poner(e, 'revisados', { id, accion });
+  if (accion === 'descartado') return null;
+  if (m.quien && valor !== sugerirCorreo(e, m)) poner(e, 'reglas', { id: claveRegla(m.tipo, m.quien), valor }); // aprende
+  const ing = m.tipo === 'ingreso';
+  return poner(e, 'movs', {
+    id: `c-${m.id}`, tipo: m.tipo, monto: monto > 0 ? monto : m.monto, moneda: m.moneda, fecha: m.fecha, medio: m.medio,
+    quien: m.quien || '', nota: m.nota || '', cat: ing ? null : valor, fuente: ing ? valor : null,
+    origen: m.origen === 'siri' ? 'siri' : 'correo', correoId: m.id, estado: 'ok', tc: tcDe(e, m.fecha),
+  });
+}
+
+// tipo_cambio.json del Action: {fecha: {compra, venta}}. Solo agrega fechas nuevas; devuelve cuáles.
+export function agregarTcAuto(e, tabla) {
+  const nuevas = [];
+  for (const [fecha, v] of Object.entries(tabla || {}))
+    if (/^\d{4}-\d{2}-\d{2}$/.test(fecha) && v?.venta > 0 && v?.compra > 0 && !e.tcAuto[fecha]) {
+      poner(e, 'tcAuto', { id: fecha, compra: +v.compra, venta: +v.venta });
+      nuevas.push(fecha);
+    }
+  return nuevas;
 }
