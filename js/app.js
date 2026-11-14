@@ -139,7 +139,10 @@ let ultimo = Date.now();
 const revisarInactividad = () => { if (mk && Date.now() - ultimo > 5 * 60e3) bloquear(); };
 setInterval(revisarInactividad, 10e3);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) return guardarYa();
+  if (document.hidden) { // el iPhone pausa la app al salir: no esperar los 4 s, subir ya lo pendiente
+    if (cfgSync && sync.cambios !== sync.hecho) { clearTimeout(tSync); sincronizarAhora(); }
+    return guardarYa();
+  }
   revisarInactividad();
   sincronizarAhora(); // al volver a la app, trae lo que se cambió en el otro dispositivo
 });
