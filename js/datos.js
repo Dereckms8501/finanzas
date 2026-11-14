@@ -22,7 +22,7 @@ export const borrarTodo = () => tx('readwrite', s => s.clear());
 
 // ---------- Modelo ----------
 export const COLECCIONES = ['movs', 'cats', 'presup', 'metas', 'abonos', 'deudas', 'pagos', 'tcManual', 'tcAuto', 'ajustes', 'alertasCerradas',
-  'revisados', 'reglas', 'llaves', 'recurrentes', 'compartidas'];
+  'revisados', 'reglas', 'llaves', 'recurrentes', 'compartidas', 'cierres', 'retos', 'rapidos'];
 export const CATS_BASE = [
   ['supermercados', 'Supermercados', 'carrito', '#165E83'],
   ['restaurantes', 'Restaurantes', 'plato', '#F4B3C2'],
@@ -354,6 +354,79 @@ export function pagarCompartida(e, sentido, persona, d) {
   poner(e, 'compartidas', { id: `a-${mov.id}`, clase: 'abono', sentido, persona, monto: d.monto, moneda: d.moneda, fecha: d.fecha, movId: mov.id, tc: mov.tc });
   return mov;
 }
+
+// ---------- Gastos hormiga ----------
+// Gasto chico (₡3 000 o menos, se cambia en Ajustes) en un comercio que se repite 4 veces o más en el mes.
+export function hormiga(e, mes, h = hoy()) {
+  const limite = ajustes(e).hormiga ?? 3000, g = {};
+  for (const m of movsMes(e, mes))
+    if (m.tipo === 'gasto' && m.estado !== 'pendiente' && !m.reembolso && m.quien && aCRC(m) <= limite) {
+      const x = (g[norm(m.quien)] ||= { quien: m.quien, n: 0, total: 0 });
+      x.n++; x.total += aCRC(m);
+    }
+  const comercios = Object.values(g).filter(x => x.n >= 4).sort((a, b) => b.total - a.total);
+  const total = comercios.reduce((s, x) => s + x.total, 0);
+  const dias = mes === mesDe(h) ? +h.slice(8) : diasEnMes(mes); // al mismo ritmo: lo de los días que van, llevado a un año
+  return { comercios, total, anual: (total / dias) * 365, limite };
+}
+
+// ---------- Cierre de mes ----------
+export function calcularCierre(e, mes) {
+  const r = resumenMes(e, mes), ant = resumenMes(e, mesAnterior(mes)), hg = hormiga(e, mes, `${mes}-${String(diasEnMes(mes)).padStart(2, '0')}`);
+  const top = Object.entries(r.porCat).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([cat, monto]) => ({ cat, nombre: e.cats[cat]?.nombre || 'Otros', monto }));
+  const datos = x => ({ ingresos: x.ingresos, gastado: x.gastado, ahorrado: x.abonos, disponible: x.disponible });
+  return { id: mes, ...datos(r), top, hormiga: hg.total, hormigaComercios: hg.comercios.map(x => x.quien), antes: datos(ant) };
+}
+// La primera vez en un mes nuevo: guarda el cierre del mes anterior (id = AAAA-MM, así no se duplica). Devuelve el cierre nuevo o null.
+export function cierrePendiente(e, h = hoy()) {
+  const mes = mesAnterior(mesDe(h));
+  if (e.cierres[mes] || !movsMes(e, mes).some(m => m.estado !== 'pendiente')) return null;
+  return poner(e, 'cierres', calcularCierre(e, mes));
+}
+
+// ---------- Fondo de emergencia ----------
+export const ID_FONDO = 'fondo-emergencia'; // id fijo: se crea una sola vez aunque haya dos dispositivos
+export function gastoPromedio(e, h = hoy()) { // promedio de los últimos 3 meses (sin contar meses en cero, por si recién empezás)
+  const meses = ultimosMeses(mesAnterior(mesDe(h)), 3).map(m => resumenMes(e, m).gastado).filter(x => x > 0);
+  return meses.length ? meses.reduce((s, x) => s + x, 0) / meses.length : resumenMes(e, mesDe(h)).gastado;
+}
+export function estadoFondo(e, h = hoy()) {
+  const f = e.metas[ID_FONDO];
+  if (!f || f.del) return null;
+  const promedio = gastoPromedio(e, h), saldo = ahorradoMeta(e, ID_FONDO), mesesObjetivo = f.mesesObjetivo || 3;
+  const objetivo = promedio * mesesObjetivo;
+  return { saldo, promedio, mesesObjetivo, objetivo, meses: promedio > 0 ? saldo / promedio : 0, pct: objetivo > 0 ? Math.min(1, saldo / objetivo) : 0 };
+}
+
+// ---------- Reto de 52 semanas ----------
+// {id, base, inverso, metaId, inicio}. Cada semana marcada es un abono con id fijo reto-<id>-<n> a la meta escogida.
+export const montoSemana = (r, n) => (r.inverso ? 53 - n : n) * r.base;
+export const idAbonoReto = (r, n) => `reto-${r.id}-${n}`;
+export function estadoReto(e, r, h = hoy()) {
+  const marcadas = [];
+  for (let n = 1; n <= 52; n++) { const a = e.abonos[idAbonoReto(r, n)]; if (a && !a.del) marcadas.push(n); }
+  return { marcadas, ahorrado: marcadas.reduce((s, n) => s + montoSemana(r, n), 0), total: 1378 * r.base,
+    semana: Math.min(52, Math.max(1, Math.floor(diasEntre(r.inicio, h) / 7) + 1)) };
+}
+export function marcarSemana(e, r, n, fecha = hoy()) { // marca o desmarca; devuelve true si quedó marcada
+  const id = idAbonoReto(r, n), a = e.abonos[id], meta = e.metas[r.metaId];
+  if (a && !a.del) { quitar(e, 'abonos', id); return false; }
+  poner(e, 'abonos', { id, metaId: r.metaId, monto: montoSemana(r, n), moneda: meta?.moneda || 'CRC', fecha, tc: tcDe(e, fecha), reto: r.id });
+  return true;
+}
+
+// ---------- Botones rápidos ----------
+// {id, nombre, monto, moneda, cat, medio}. Un toque = un gasto de hoy (el nombre queda como comercio, para los gastos hormiga).
+export const usarRapido = (e, b, fecha = hoy()) => poner(e, 'movs', { id: nuevoId(), tipo: 'gasto', monto: b.monto, moneda: b.moneda, fecha, medio: b.medio,
+  quien: b.nombre, nota: '', cat: b.cat, fuente: null, origen: 'rapido', estado: 'ok', tc: tcDe(e, fecha) });
+
+// ---------- Exportar ----------
+export const COLUMNAS_EXPORT = ['Fecha', 'Tipo', 'Monto', 'Moneda', 'Monto en colones', 'Categoría', 'Medio', 'Comercio o persona', 'Nota'];
+export const filasExport = (e, desde, hasta) => lista(e, 'movs').filter(m => m.estado !== 'pendiente' && m.fecha >= desde && m.fecha <= hasta)
+  .sort((a, b) => a.fecha.localeCompare(b.fecha))
+  .map(m => [m.fecha, m.tipo, m.monto, m.moneda, Math.round(aCRC(m) * 100) / 100,
+    m.reembolso ? 'Cuenta compartida' : m.tipo === 'ingreso' ? FUENTES[m.fuente] || 'Ingreso' : e.cats[m.cat]?.nombre || 'Otros',
+    m.medio || '', m.quien || '', m.nota || '']);
 
 // (Disponible − lo que falta pagar este mes) ÷ días que quedan contando hoy
 export function presupuestoDiario(e, h = hoy()) {

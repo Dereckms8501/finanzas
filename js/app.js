@@ -2,6 +2,7 @@ import * as C from './cripto.js';
 import * as D from './datos.js';
 import * as G from './graficos.js';
 import * as S from './sync.js';
+import * as X from './exportar.js';
 import { icono, ICONOS_EXTRA } from './iconos.js';
 
 const $ = s => document.querySelector(s);
@@ -118,10 +119,12 @@ async function descargarRespaldo() {
   await guardarYa();
   const sobre = { v: 1, tipo: 'respaldo-finanzas', llave: meta.pass, datos: await C.cifrar(mk, E) };
   const nombre = `respaldo-finanzas-${D.hoy()}.json`;
-  const archivo = new File([JSON.stringify(sobre)], nombre, { type: 'application/json' });
+  bajar(new File([JSON.stringify(sobre)], nombre, { type: 'application/json' }));
+}
+function bajar(archivo) { // en el iPhone abre la hoja de compartir (ahí sale "Guardar en Archivos")
   if (esIOS && navigator.canShare?.({ files: [archivo] })) return navigator.share({ files: [archivo] }).catch(() => {});
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(archivo); a.download = nombre; a.click();
+  a.href = URL.createObjectURL(archivo); a.download = archivo.name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 async function leerRespaldo(input) {
@@ -210,6 +213,7 @@ async function abrirFaceID() {
 async function cargarEstado() {
   E = D.completar(await C.descifrar(mk, await D.leer('estado')));
   if (D.generarPendientes(E)) guardar(); // recurrentes e ingresos fijos que ya llegaron a su fecha
+  if (D.cierrePendiente(E)) guardar();   // primera vez que se abre en un mes nuevo: se guarda el cierre del anterior
   cfgSync = meta.sync ? await C.descifrar(mk, meta.sync) : null;
   sync.cambios = sync.hecho = 0;
   errorBloqueo = ''; ultimo = Date.now();
@@ -219,6 +223,11 @@ async function cargarEstado() {
     accion = null; history.replaceState(null, '', location.pathname);
   }
   ui.anim = true; render();
+  const prev = D.mesAnterior(D.mesDe(D.hoy())), c = E.cierres[prev];
+  if (c && !c.del && meta.cierreVisto !== prev) { // el resumen se muestra una vez por dispositivo
+    meta.cierreVisto = prev; guardarMeta();
+    abrirDialogo(vCierre(prev));
+  }
 }
 
 async function crear(f) {
@@ -392,6 +401,8 @@ function vInicio() {
   <div class="tarjeta diario">${pd.libre >= 0
     ? `Podés gastar <strong>${crc(pd.porDia)}</strong> por día hasta fin de mes <span class="sec">(${pd.dias} ${pd.dias === 1 ? 'día' : 'días'})</span>`
     : `<span class="txt-rojo">Te pasaste por <strong>${crc(-pd.libre)}</strong> contando lo que falta pagar este mes.</span>`}</div>
+  ${barraRapidos()}
+  ${tarjetaHormiga(mes)}
   <div class="tarjeta sinpe"><h2>${icono('sinpe')} SINPE del mes</h2>
     <dl class="trio"><div><dt>Enviados</dt><dd>${crc(r.sinpeEnv)}</dd></div><div><dt>Recibidos</dt><dd>${crc(r.sinpeRec)}</dd></div><div><dt>Diferencia</dt><dd>${crc(r.sinpeRec - r.sinpeEnv)}</dd></div></dl></div>
   <div class="rejilla">
@@ -400,6 +411,28 @@ function vInicio() {
     <div class="tarjeta"><h2>Últimos 6 meses</h2>${G.barras(seis, 'Ingresos', 'Gastos')}</div>
   </div>
   <div class="tarjeta"><h2>Alertas</h2>${vAlertas(alertasVisibles())}</div>`;
+}
+
+const barraRapidos = () => {
+  const rs = D.lista(E, 'rapidos').sort((a, b) => a.nombre.localeCompare(b.nombre));
+  return rs.length ? `<div class="rapidos">${rs.map(b => `<button class="btn sec-btn chico" data-a="rapido" data-v="${b.id}">${esc(b.nombre)}<span class="sec">${monto(b.monto, b.moneda)}</span></button>`).join('')}</div>` : '';
+};
+function tarjetaHormiga(mes) {
+  const hg = D.hormiga(E, mes);
+  if (!hg.comercios.length) return '';
+  return `<div class="tarjeta"><h2>Gastos hormiga</h2>
+    <p>Este mes llevás <strong>${crc(hg.total)}</strong> en gastos chicos que se repiten. A este ritmo serían unos <strong>${crc(hg.anual)}</strong> al año.</p>
+    ${hg.comercios.map(x => `<div class="mini"><span class="crece">${esc(x.quien)}</span><span class="sec">${x.n} veces</span><span>${crc(x.total)}</span></div>`).join('')}
+    <p class="nota">Cuento los gastos de ${crc(hg.limite)} o menos en un mismo lugar, 4 veces o más en el mes. El límite se cambia en Ajustes.</p></div>`;
+}
+function vCierre(mes) {
+  const c = D.calcularCierre(E, mes), dif = c.gastado - c.antes.gastado, ant = D.nombreMes(D.mesAnterior(mes)).toLowerCase();
+  return `<h2>Cierre de ${D.nombreMes(mes).toLowerCase()}</h2>
+  <dl class="trio"><div><dt>Ingresos</dt><dd>${crc(c.ingresos)}</dd></div><div><dt>Gastado</dt><dd>${crc(c.gastado)}</dd></div><div><dt>Ahorrado</dt><dd>${crc(c.ahorrado)}</dd></div></dl>
+  <p>Te quedaron <strong class="${c.disponible < 0 ? 'txt-rojo' : ''}">${crc(c.disponible)}</strong> disponibles.</p>
+  ${c.antes.gastado ? `<p class="sec">Gastaste ${dif > 0 ? `<span class="txt-rojo">${crc(dif)} más</span>` : dif < 0 ? `<span class="txt-verde">${crc(-dif)} menos</span>` : 'lo mismo'} que en ${ant}.</p>` : ''}
+  ${c.top.length ? `<p class="et">Donde más gastaste</p>${c.top.map(t => `<div class="mini">${icCat(E.cats[t.cat])}<span class="crece">${esc(t.nombre)}</span><span>${crc(t.monto)}</span></div>`).join('')}` : ''}
+  ${c.hormiga ? `<p class="sec">Gastos hormiga: ${crc(c.hormiga)} (${c.hormigaComercios.map(esc).join(', ')}).</p>` : ''}`;
 }
 
 // ---------------- Presupuesto ----------------
@@ -419,6 +452,7 @@ function vPresup() {
     if (!a && !b) return '';
     return `<tr><td>${esc(c.nombre)}</td><td>${crc(a)}</td><td>${crc(b)}</td><td class="${d > 0 ? 'txt-rojo' : d < 0 ? 'txt-verde' : ''}">${d > 0 ? `${crc(d)} más` : d < 0 ? `${crc(-d)} menos` : 'igual'}</td></tr>`;
   }).join('');
+  const cierres = D.lista(E, 'cierres').sort((a, b) => b.id.localeCompare(a.id));
   return `${selMes()}
   <div class="tarjeta"><div class="cab"><h2>Ingresos del mes</h2><button class="btn chico" data-a="nuevoIngreso">${icono('mas')} Ingreso</button></div>
     ${ingresos.length ? ingresos.map(filaMov).join('') : '<p class="vacio">Todavía no anotaste ingresos este mes.</p>'}</div>
@@ -428,7 +462,11 @@ function vPresup() {
     <div><dt>Abonos a metas</dt><dd>${crc(r.abonos)}</dd></div><div><dt>Pagos de deudas</dt><dd>${crc(r.pagos)}</dd></div>
     <div class="total"><dt>Disponible</dt><dd class="${r.disponible < 0 ? 'txt-rojo' : ''}">${crc(r.disponible)} <span class="sec">(${dolares(r.disponible)})</span></dd></div></dl></div>
   <div class="tarjeta"><h2>Comparado con ${D.nombreMes(D.mesAnterior(ui.mes)).toLowerCase()}</h2>
-    ${comp ? `<table class="tabla"><thead><tr><th>Categoría</th><th>Este mes</th><th>Anterior</th><th>Diferencia</th></tr></thead><tbody>${comp}</tbody></table>` : '<p class="vacio">Sin gastos para comparar.</p>'}</div>`;
+    ${comp ? `<table class="tabla"><thead><tr><th>Categoría</th><th>Este mes</th><th>Anterior</th><th>Diferencia</th></tr></thead><tbody>${comp}</tbody></table>` : '<p class="vacio">Sin gastos para comparar.</p>'}</div>
+  <div class="tarjeta"><h2>Cierres de mes</h2>${cierres.length ? cierres.map(c => {
+    const x = D.calcularCierre(E, c.id);
+    return `<button class="fila-btn" data-a="verCierre" data-v="${c.id}"><b>${D.nombreMes(c.id)}</b><span class="sec">Gastaste ${crc(x.gastado)} · ahorraste ${crc(x.ahorrado)} · te quedaron ${crc(x.disponible)}</span></button>`;
+  }).join('') : '<p class="vacio">El primer cierre aparece cuando empiece el próximo mes.</p>'}</div>`;
 }
 
 // ---------------- Movimientos ----------------
@@ -475,7 +513,7 @@ function vMovs() {
     .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.upd - a.upd);
   return `${pest}
   <div class="rejilla movs-rej">
-    <div class="tarjeta"><h2>Nuevo movimiento</h2>${formMov()}
+    <div class="tarjeta"><h2>Nuevo movimiento</h2>${barraRapidos()}${formMov()}
       ${botonCorreo()}</div>
     <div class="tarjeta">${selMes()}
       <div class="filtros"><select data-filtro="fCat" aria-label="Filtrar por categoría"><option value="">Todas las categorías</option>${D.cats(E).map(c => `<option value="${c.id}" ${ui.fCat === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}</select>
@@ -610,10 +648,47 @@ function vCalendario() {
 }
 
 // ---------------- Metas ----------------
+const detAbonos = ab => ab.length ? `<details><summary>Abonos (${ab.length})</summary>${ab.slice().reverse().map(a => `<div class="mini"><span>${D.fechaCorta(a.fecha)}</span><span>${monto(a.monto, a.moneda)}</span><button class="ico-btn chico" data-a="borrarAbono" data-v="${a.id}" aria-label="Borrar abono">${icono('basura')}</button></div>`).join('')}</details>` : '';
+const mesesTxt = n => { const r = Math.floor(n * 10) / 10; return `${r.toLocaleString('es-CR')} ${r === 1 ? 'mes' : 'meses'}`; };
+function tarjetaFondo() {
+  const f = E.metas[D.ID_FONDO];
+  if (!f || f.del) return `<div class="tarjeta"><h2>Fondo de emergencia</h2>
+    <p class="nota">Plata apartada solo para imprevistos: una cita médica, una reparación o quedarte sin ingresos un tiempo. Lo usual es juntar entre 3 y 6 meses de lo que gastás.</p>
+    <div class="acciones"><button class="btn chico" data-a="crearFondo">${icono('mas')} Crear fondo</button></div></div>`;
+  const s = D.estadoFondo(E);
+  return `<div class="tarjeta meta"><div class="cab"><h2>Fondo de emergencia</h2><span class="pct">${Math.floor(s.pct * 100)} %</span></div>
+    <div class="barra"><i class="verde" style="width:${(s.pct * 100).toFixed(1)}%"></i></div>
+    <p>Tenés <strong>${crc(s.saldo)}</strong>${s.promedio > 0 ? `: te alcanza para <strong>${mesesTxt(s.meses)}</strong> de gastos` : ''}.</p>
+    <p class="sec">${s.promedio > 0 ? `Gastás en promedio ${crc(s.promedio)} al mes, así que ${s.mesesObjetivo} meses son ${crc(s.objetivo)}.` : 'Cuando tengas gastos anotados te digo cuántos meses te cubre.'}</p>
+    <label class="lbl-fila">Meta en meses<select data-fondo>${[3, 4, 5, 6].map(n => `<option ${s.mesesObjetivo === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+    <div class="acciones"><button class="btn chico" data-a="abono" data-v="${f.id}">${icono('mas')} Abono</button>
+      <button class="ico-btn chico" data-a="borrarMeta" data-v="${f.id}" aria-label="Borrar fondo">${icono('basura')}</button></div>
+    ${detAbonos(D.abonosMeta(E, f.id))}</div>`;
+}
+function tarjetaReto() {
+  const r = D.lista(E, 'retos')[0];
+  if (!r) return `<div class="tarjeta"><h2>Reto de 52 semanas</h2>
+    <p class="nota">Cada semana ahorrás un poco más: la semana 1 el monto base, la 2 el doble, y así hasta la 52. Con ₡500 de base juntás ₡689 000 en un año.</p>
+    <form data-f="reto" class="form-col">
+      <input name="base" inputmode="decimal" placeholder="Monto base (ej. 500)" required aria-label="Monto base">
+      <label class="check"><input type="checkbox" name="inverso">Al revés: empezar por la semana más cara</label>
+      <label>Guardar en<select name="meta"><option value="">Una meta nueva para el reto</option>${D.lista(E, 'metas').map(m => `<option value="${m.id}">${esc(m.nombre)}</option>`).join('')}</select></label>
+      <button class="btn">Empezar el reto</button></form></div>`;
+  const s = D.estadoReto(E, r), m = E.metas[r.metaId], mon = m?.moneda || 'CRC';
+  return `<div class="tarjeta"><div class="cab"><h2>Reto de 52 semanas</h2><span class="pct">${s.marcadas.length}/52</span></div>
+    <p>Llevás <strong>${monto(s.ahorrado, mon)}</strong> de ${monto(s.total, mon)}${m ? ` · se guarda en "${esc(m.nombre)}"` : ''}.</p>
+    <p class="sec">Vas en la semana ${s.semana}: te toca ${monto(D.montoSemana(r, s.semana), mon)}. Tocá una semana para marcarla o desmarcarla.</p>
+    <div class="semanas">${Array.from({ length: 52 }, (_, i) => {
+      const n = i + 1, h = s.marcadas.includes(n);
+      return `<button class="semana ${h ? 'hecha' : ''} ${n === s.semana ? 'actual' : ''}" data-a="semanaReto" data-v="${n}" aria-pressed="${h}" aria-label="Semana ${n}" data-tip="Semana ${n}: ${monto(D.montoSemana(r, n), mon)}">${n}</button>`;
+    }).join('')}</div>
+    <div class="acciones fin"><button class="ico-btn chico" data-a="borrarReto" data-v="${r.id}" aria-label="Borrar reto">${icono('basura')}</button></div></div>`;
+}
 function vMetas() {
-  const metas = D.lista(E, 'metas').sort((a, b) => a.creada.localeCompare(b.creada));
+  const metas = D.lista(E, 'metas').filter(m => m.id !== D.ID_FONDO).sort((a, b) => a.creada.localeCompare(b.creada));
   return `<div class="cab"><h1>Metas de ahorro</h1><button class="btn chico" data-a="nuevaMeta">${icono('mas')} Nueva meta</button></div>
-  ${metas.length ? '' : '<p class="vacio">Todavía no tenés metas. Creá una para empezar a ahorrar con un objetivo.</p>'}
+  <div class="rejilla">${tarjetaFondo()}${tarjetaReto()}</div>
+  ${metas.length ? '' : '<p class="vacio">Todavía no tenés otras metas. Creá una para ahorrar con un objetivo.</p>'}
   <div class="rejilla">${metas.map(m => {
     const s = D.estadoMeta(E, m), ab = D.abonosMeta(E, m.id);
     return `<div class="tarjeta meta"><div class="cab"><h2>${esc(m.nombre)}</h2><span class="pct">${Math.floor(s.pct * 100)} %</span></div>
@@ -624,7 +699,7 @@ function vMetas() {
       <div class="acciones"><button class="btn chico" data-a="abono" data-v="${m.id}">${icono('mas')} Abono</button>
         <button class="ico-btn chico" data-a="editarMeta" data-v="${m.id}" aria-label="Editar meta">${icono('lapiz')}</button>
         <button class="ico-btn chico" data-a="borrarMeta" data-v="${m.id}" aria-label="Borrar meta">${icono('basura')}</button></div>
-      ${ab.length ? `<details><summary>Abonos (${ab.length})</summary>${ab.slice().reverse().map(a => `<div class="mini"><span>${D.fechaCorta(a.fecha)}</span><span>${monto(a.monto, a.moneda)}</span><button class="ico-btn chico" data-a="borrarAbono" data-v="${a.id}" aria-label="Borrar abono">${icono('basura')}</button></div>`).join('')}</details>` : ''}
+      ${detAbonos(ab)}
     </div>`;
   }).join('')}</div>`;
 }
@@ -704,6 +779,24 @@ function vAjustes() {
       <button class="btn">Conectar</button></form>`}</div>
 
   ${tarjetaLector()}
+
+  <div class="tarjeta"><h2>Botones rápidos</h2>
+    <p class="nota">Para lo que comprás seguido, como el café o el bus. Con un toque en Inicio o en Movimientos queda anotado como gasto de hoy.</p>
+    ${D.lista(E, 'rapidos').sort((x, y) => x.nombre.localeCompare(y.nombre)).map(b => `<div class="mini"><span class="crece">${esc(b.nombre)}</span><span>${monto(b.monto, b.moneda)}</span><button class="ico-btn chico" data-a="borrarRapido" data-v="${b.id}" aria-label="Borrar ${esc(b.nombre)}">${icono('basura')}</button></div>`).join('')}
+    <form data-f="rapido" class="form-col">
+      <input name="nombre" placeholder="Nombre (ej. Café)" required maxlength="24" aria-label="Nombre del botón">
+      <div class="fila"><input name="monto" inputmode="decimal" placeholder="Monto" required aria-label="Monto">
+        <select name="moneda" aria-label="Moneda"><option value="CRC">₡</option><option value="USD">$</option></select></div>
+      <div class="fila"><select name="cat" aria-label="Categoría">${D.cats(E).map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join('')}</select>
+        <select name="medio" aria-label="Medio">${D.MEDIOS.map(x => `<option>${x}</option>`).join('')}</select></div>
+      <button class="btn">Agregar botón</button></form>
+    <p class="et">Gastos hormiga</p>
+    <form data-f="hormiga" class="fila"><label>Cuento como hormiga los gastos de hasta (₡)<input name="limite" inputmode="decimal" value="${D.numPlano(a.hormiga ?? 3000)}" required></label><button class="btn">Guardar</button></form></div>
+
+  <div class="tarjeta"><h2>Exportar movimientos</h2>
+    <p class="nota">Para abrir tus movimientos en Excel o Google Sheets. Ojo: este archivo sale sin cifrar.</p>
+    <form data-f="exportar" class="form-col"><div class="fila"><label>Desde<input name="desde" type="date" value="${D.mesDe(D.hoy())}-01" required></label><label>Hasta<input name="hasta" type="date" value="${D.hoy()}" required></label></div>
+      <div class="acciones"><button type="button" class="btn sec-btn" data-a="exportar" data-v="xlsx">Excel (.xlsx)</button><button type="button" class="btn sec-btn" data-a="exportar" data-v="csv">CSV</button></div></form></div>
 
   <div class="tarjeta"><h2>Respaldo</h2>
     <p class="nota">Un archivo cifrado con todos tus datos. Para cargarlo vas a necesitar la contraseña que tenías cuando lo descargaste.</p>
@@ -905,10 +998,47 @@ const ACC = {
       D.lista(E, 'movs').filter(m => m.estado === 'pendiente' && m.rec?.startsWith(`r-${v}-`)).forEach(m => D.quitar(E, 'movs', m.id));
     });
   },
+  rapido: v => {
+    const b = E.rapidos[v]; let m;
+    cambiar(() => { m = D.usarRapido(E, b); });
+    aviso(`${b.nombre} anotado: ${monto(b.monto, b.moneda)}`, () => cambiar(() => D.quitar(E, 'movs', m.id)));
+  },
+  borrarRapido: v => cambiar(() => D.quitar(E, 'rapidos', v)),
+  verCierre: v => abrirDialogo(vCierre(v)),
+  crearFondo: () => cambiar(() => D.poner(E, 'metas', { id: D.ID_FONDO, nombre: 'Fondo de emergencia', especial: 'fondo', mesesObjetivo: 3, objetivo: 0, moneda: 'CRC', limite: null, creada: D.hoy() })),
+  semanaReto: v => {
+    const r = D.lista(E, 'retos')[0]; let marcada;
+    cambiar(() => { marcada = D.marcarSemana(E, r, +v); });
+    aviso(marcada ? `Semana ${v} marcada: ${monto(D.montoSemana(r, +v), E.metas[r.metaId]?.moneda)}` : `Semana ${v} desmarcada`);
+  },
+  borrarReto: v => { if (confirm('¿Borrar el reto? Lo que ya ahorraste se queda en la meta.')) cambiar(() => D.quitar(E, 'retos', v)); },
+  exportar: (v, b) => {
+    const f = b.form, desde = f.desde.value, hasta = f.hasta.value;
+    if (!desde || !hasta || desde > hasta) return aviso('Revisá las fechas');
+    const n = D.filasExport(E, desde, hasta).length;
+    if (!n) return aviso('No hay movimientos en esas fechas');
+    // el aviso va en un diálogo propio (no confirm) para que el toque en "Descargar" abra la hoja de compartir del iPhone
+    abrirDialogo(`<h2>Archivo sin cifrar</h2>
+      <p>El archivo trae ${n} ${n === 1 ? 'movimiento' : 'movimientos'} y <strong>no va cifrado</strong>: cualquiera que lo abra puede leerlos.</p>
+      <p class="nota">Guardalo en un lugar seguro y borralo cuando ya no lo ocupés. No lo subás a ningún lado público.</p>
+      <div class="acciones"><button class="btn" data-a="bajarExport" data-v="${v}|${desde}|${hasta}">Descargar ${v === 'csv' ? 'CSV' : 'Excel'}</button></div>`);
+  },
+  bajarExport: v => {
+    const [fmt, desde, hasta] = v.split('|'), filas = D.filasExport(E, desde, hasta);
+    const datos = fmt === 'csv' ? X.csv(D.COLUMNAS_EXPORT, filas) : X.xlsx(D.COLUMNAS_EXPORT, filas);
+    dlg.close();
+    bajar(new File([datos], `movimientos-${desde}-a-${hasta}.${fmt}`,
+      { type: fmt === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  },
   diaCal: v => { ui.diaCal = ui.diaCal === v ? '' : v; render(); },
   nuevaMeta: () => abrirDialogo(formMeta()),
   editarMeta: v => abrirDialogo(formMeta(E.metas[v])),
-  borrarMeta: v => { if (confirm('¿Borrar esta meta y todos sus abonos?')) cambiar(() => { D.quitar(E, 'metas', v); D.abonosMeta(E, v).forEach(a => D.quitar(E, 'abonos', a.id)); }); },
+  borrarMeta: v => {
+    if (confirm('¿Borrar esta meta y todos sus abonos?')) cambiar(() => {
+      D.quitar(E, 'metas', v); D.abonosMeta(E, v).forEach(a => D.quitar(E, 'abonos', a.id));
+      D.lista(E, 'retos').filter(r => r.metaId === v).forEach(r => D.quitar(E, 'retos', r.id)); // el reto se queda sin dónde guardar
+    });
+  },
   abono: v => abrirDialogo(formMontoFecha(`Abono a ${E.metas[v].nombre}`, 'abono', v, '', E.metas[v].moneda)),
   borrarAbono: v => { if (confirm('¿Borrar este abono?')) cambiar(() => D.quitar(E, 'abonos', v)); },
   nuevaDeuda: () => abrirDialogo(formDeuda()),
@@ -1040,6 +1170,27 @@ const FORM = {
     cambiar(() => { D.poner(E, 'recurrentes', r); D.generarPendientes(E); });
     aviso(previo.id ? 'Cambios guardados' : ing ? 'Ingreso fijo guardado' : 'Gasto recurrente guardado');
   },
+  rapido: f => {
+    const valor = D.parseMonto(f.monto.value);
+    if (!(valor > 0)) return aviso('Escribí un monto válido');
+    cambiar(() => D.poner(E, 'rapidos', { id: D.nuevoId(), nombre: f.nombre.value.trim(), monto: valor, moneda: f.moneda.value, cat: f.cat.value, medio: f.medio.value }));
+    aviso('Botón agregado');
+  },
+  hormiga: f => {
+    const valor = D.parseMonto(f.limite.value);
+    if (!(valor > 0)) return aviso('Escribí un monto válido');
+    cambiar(() => D.poner(E, 'ajustes', { ...D.ajustes(E), id: 'general', hormiga: valor }));
+    aviso('Límite guardado');
+  },
+  reto: f => {
+    const base = D.parseMonto(f.base.value);
+    if (!(base > 0)) return aviso('Escribí un monto válido');
+    cambiar(() => {
+      const metaId = f.meta.value || D.poner(E, 'metas', { id: D.nuevoId(), nombre: 'Reto de 52 semanas', objetivo: 1378 * base, moneda: 'CRC', limite: null, creada: D.hoy() }).id;
+      D.poner(E, 'retos', { id: D.nuevoId(), base, inverso: f.inverso.checked, metaId, inicio: D.hoy() });
+    });
+    aviso('Reto creado. Marcá la semana 1 cuando ahorrés.');
+  },
   meta: f => {
     const objetivo = D.parseMonto(f.objetivo.value);
     if (!(objetivo > 0)) return aviso('Escribí un monto válido');
@@ -1123,6 +1274,7 @@ document.addEventListener('change', e => {
     cambiar(() => D.ponerLimite(E, ui.mes, t.dataset.lim, v));
   } else if (t.dataset.filtro) { ui[t.dataset.filtro] = t.value; render(); }
   else if (t.matches('[data-respaldo]')) leerRespaldo(t);
+  else if (t.matches('[data-fondo]')) cambiar(() => D.poner(E, 'metas', { ...E.metas[D.ID_FONDO], mesesObjetivo: +t.value }));
   else if (t.dataset.ajuste) cambiar(() => {
     D.poner(E, 'ajustes', { ...D.ajustes(E), id: 'general', [t.dataset.ajuste]: t.value });
   });

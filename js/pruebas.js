@@ -1,6 +1,7 @@
 // Pruebas de los cálculos, el formato y el cifrado. Abrir pruebas.html en el navegador.
 import * as D from './datos.js';
 import * as C from './cripto.js';
+import * as X from './exportar.js';
 
 const out = document.getElementById('out');
 let fallos = 0;
@@ -317,6 +318,52 @@ try {
     const t = D.poner(ex, 'movs', { id: 'reg', tipo: 'gasto', monto: 5000, moneda: 'CRC', fecha: '2026-11-07', medio: 'Tarjeta', cat: 'otros', estado: 'ok' });
     return D.guardarDividido(ex, t, D.repartir(5000, 'CRC', { yo: true, personas: ['Luis'], modo: 'distintos', montos: { Luis: 5000 } })) === null && ex.movs.reg.del;
   })());
+
+  // ---- Gastos hormiga, cierre, fondo, reto, botones rápidos, exportar ----
+  const eh = D.estadoNuevo('Hormiga', 500);
+  const gh = (id, monto, fecha, quien, extra = {}) => D.poner(eh, 'movs', { id, tipo: 'gasto', monto, moneda: 'CRC', fecha, medio: 'Tarjeta', quien, cat: 'restaurantes', estado: 'ok', ...extra });
+  D.poner(eh, 'movs', { id: 'i1', tipo: 'ingreso', monto: 200000, moneda: 'CRC', fecha: '2026-10-01', medio: 'SINPE', fuente: 'beca', estado: 'ok' });
+  for (let d = 1; d <= 5; d++) gh('cafe' + d, 1500, `2026-10-0${d}`, d % 2 ? 'Café Britt' : 'CAFE BRITT');
+  for (let d = 1; d <= 3; d++) gh('pan' + d, 1000, `2026-10-0${d}`, 'Panadería');
+  gh('super', 25000, '2026-10-04', 'Café Britt');
+  const hg = D.hormiga(eh, '2026-10', '2026-10-10');
+  ok('hormiga: solo lo chico que se repite 4 veces o más', hg.comercios.length === 1 && hg.total === 7500 && hg.comercios[0].n === 5, JSON.stringify(hg));
+  igual('hormiga: lo proyecta a un año', hg.anual, 7500 / 10 * 365);
+  D.poner(eh, 'ajustes', { ...D.ajustes(eh), hormiga: 1000 });
+  ok('hormiga: el límite se puede cambiar', D.hormiga(eh, '2026-10', '2026-10-10').comercios.length === 0);
+  D.poner(eh, 'ajustes', { ...D.ajustes(eh), hormiga: 3000 });
+
+  ok('cierre: no se crea si el mes anterior está vacío', D.cierrePendiente(eh, '2026-10-03') === null);
+  const ci = D.cierrePendiente(eh, '2026-11-02');
+  ok('cierre: al entrar a un mes nuevo se guarda el anterior', ci?.id === '2026-10' && ci.gastado === 35500 && ci.ingresos === 200000 && ci.top[0].cat === 'restaurantes' && ci.hormiga === 7500, JSON.stringify(ci));
+  ok('cierre: no se duplica', D.cierrePendiente(eh, '2026-11-20') === null);
+
+  ok('fondo: no existe hasta crearlo', D.estadoFondo(eh, '2026-11-02') === null);
+  D.poner(eh, 'metas', { id: D.ID_FONDO, nombre: 'Fondo', especial: 'fondo', mesesObjetivo: 3, objetivo: 0, moneda: 'CRC', creada: '2026-11-01' });
+  D.poner(eh, 'abonos', { id: 'f1', metaId: D.ID_FONDO, monto: 71000, moneda: 'CRC', fecha: '2026-11-01' });
+  const fe = D.estadoFondo(eh, '2026-11-02');
+  ok('fondo: promedio de los meses con gastos y meses que cubre', fe.promedio === 35500 && fe.meses === 2 && fe.objetivo === 106500, JSON.stringify(fe));
+
+  const reto = D.poner(eh, 'retos', { id: 'r1', base: 500, inverso: false, metaId: D.ID_FONDO, inicio: '2026-11-01' });
+  ok('reto: semana 1 = base, 52 = 52 × base, total 1378 × base', D.montoSemana(reto, 1) === 500 && D.montoSemana(reto, 52) === 26000 && D.estadoReto(eh, reto, '2026-11-01').total === 689000);
+  ok('reto al revés empieza por la más cara', D.montoSemana({ ...reto, inverso: true }, 1) === 26000);
+  ok('reto: semana en la que vas', D.estadoReto(eh, reto, '2026-11-15').semana === 3 && D.estadoReto(eh, reto, '2028-01-01').semana === 52);
+  ok('reto: marcar una semana crea el abono', D.marcarSemana(eh, reto, 1, '2026-11-02') && D.ahorradoMeta(eh, D.ID_FONDO) === 71500);
+  ok('reto: desmarcarla lo quita', !D.marcarSemana(eh, reto, 1) && D.ahorradoMeta(eh, D.ID_FONDO) === 71000);
+  D.marcarSemana(eh, reto, 2, '2026-11-09');
+  ok('reto: avance', (s => s.marcadas.join() === '2' && s.ahorrado === 1000)(D.estadoReto(eh, reto, '2026-11-09')));
+
+  const rm = D.usarRapido(eh, { nombre: 'Bus', monto: 400, moneda: 'CRC', cat: 'otros', medio: 'Efectivo' }, '2026-11-03');
+  ok('botón rápido: anota el gasto de hoy', rm.tipo === 'gasto' && rm.quien === 'Bus' && rm.fecha === '2026-11-03' && D.resumenMes(eh, '2026-11').gastado === 400);
+
+  gh('pend', 9999, '2026-10-20', 'Algo', { estado: 'pendiente' });
+  const fxp = D.filasExport(eh, '2026-10-01', '2026-10-31');
+  ok('exportar: solo el rango, sin pendientes y en orden', fxp.length === 10 && fxp[0][0] === '2026-10-01' && fxp[0].length === D.COLUMNAS_EXPORT.length && fxp.every(f => f[2] !== 9999));
+  const cs = X.csv(['A', 'B'], [['=1+1', 1.5]]);
+  ok('csv: bloquea fórmulas y usa coma decimal', cs.startsWith('﻿') && cs.includes(`"'=1+1";1,5`), cs);
+  ok('zip: CRC-32 correcto', X.crc32(new TextEncoder().encode('123456789')) === 0xCBF43926);
+  const zx = new Uint8Array(await X.xlsx(['A'], [['x']]).arrayBuffer());
+  ok('xlsx: sale un zip', zx[0] === 0x50 && zx[1] === 0x4B && zx.length > 500);
 
   const nuevas = D.agregarTcAuto(ec, { '2026-11-12': { compra: 440, venta: 450 }, '2026-11-13': { compra: 0, venta: 451 } });
   ok('tipo de cambio automático: solo fechas válidas', nuevas.join() === '2026-11-12' && D.tcDe(ec, '2026-11-12') === 450);
