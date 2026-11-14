@@ -99,6 +99,8 @@ async function traerCorreo(manual = false) {
     lector.error = e instanceof S.ErrorSync ? e.message : 'No pude abrir los movimientos del correo. ¿La llave pública en GitHub es la de esta app?';
   }
   if (!mk) return;
+  const solos = D.anotarClaros(E, correo?.movs);
+  if (solos) { guardar(); aviso(`Anoté ${solos} ${solos === 1 ? 'movimiento' : 'movimientos'} del correo`); }
   const n = D.pendientesCorreo(E, correo?.movs).length;
   if (n && n > lector.avisados) aviso(`Tenés ${n} ${n === 1 ? 'movimiento nuevo' : 'movimientos nuevos'} del correo`);
   lector.avisados = n;

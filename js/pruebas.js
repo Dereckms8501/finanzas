@@ -208,6 +208,23 @@ try {
   D.aplicarRevision(ec, nr, {});
   ok('correo: nada vuelve a aparecer', D.pendientesCorreo(ec, [g, s, i, nr]).length === 0);
   ok('correo: nunca se importa dos veces (mismo id)', D.lista(ec, 'movs').filter(m => m.correoId === 'x1').length === 1);
+  const ea = D.estadoNuevo('Solos', 500);
+  D.poner(ea, 'movs', { id: 'm1', tipo: 'gasto', monto: 3000, moneda: 'CRC', fecha: '2026-11-10', medio: 'Efectivo', cat: 'otros', estado: 'ok' });
+  const base = { tipo: 'gasto', medio: 'Tarjeta', moneda: 'CRC', fecha: '2026-11-11', origen: 'bac' };
+  const claros = [
+    { ...base, id: 'a1', monto: 4000, quien: 'PALI', cat: 'supermercados' },              // se anota solo
+    { ...base, id: 'a2', monto: 900, quien: 'TIENDA X', cat: 'otros' },                   // categoría dudosa
+    { ...base, id: 'a3', monto: 1500, quien: 'Uber', cat: 'transporte', confirmar: true }, // ¿viaje o Eats?
+    { ...base, id: 'a4', monto: 3000, quien: 'SODA', cat: 'restaurantes' },               // igual a uno anotado a mano
+    { ...base, id: 'a5', monto: 2000, quien: 'Uber Eats', cat: 'restaurantes', origen: 'uber' }, // recibo sin cobro
+    { ...base, id: 'a6', tipo: 'ingreso', medio: 'SINPE', monto: 6000, quien: 'MARIA', fuente: 'otro', origen: 'bac-sinpe' },
+  ];
+  ok('correo: anota solos solo los claros (compra con categoría y SINPE recibido)', D.anotarClaros(ea, claros) === 2
+    && ea.movs['c-a1']?.cat === 'supermercados' && ea.movs['c-a6']?.tipo === 'ingreso');
+  ok('correo: lo dudoso queda para revisar', D.pendientesCorreo(ea, claros).map(m => m.id).join() === 'a2,a3,a4,a5');
+  ok('correo: anotar solos no inventa reglas', !Object.keys(ea.reglas).length);
+  ok('correo: con regla aprendida también se anota solo',
+    (D.poner(ea, 'reglas', { id: D.claveRegla('gasto', 'TIENDA X'), valor: 'gym' }), D.anotarClaros(ea, claros) === 1 && ea.movs['c-a2'].cat === 'gym'));
   const nuevas = D.agregarTcAuto(ec, { '2026-11-12': { compra: 440, venta: 450 }, '2026-11-13': { compra: 0, venta: 451 } });
   ok('tipo de cambio automático: solo fechas válidas', nuevas.join() === '2026-11-12' && D.tcDe(ec, '2026-11-12') === 450);
   ok('tipo de cambio: el manual le gana al automático', (D.poner(ec, 'tcManual', { id: '2026-11-12', valor: 455 }), D.tcDe(ec, '2026-11-12') === 455));

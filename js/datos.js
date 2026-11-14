@@ -269,6 +269,24 @@ export function aplicarRevision(e, m, { descartar, monto, valor }) {
   });
 }
 
+// ¿Se puede anotar sin preguntar? Sí: ingresos (SINPE recibido), lo que vino de Siri, y gastos con regla aprendida
+// o categoría clara. No: lo dudoso (Uber sin recibo, recibo de Uber sin cobro del banco, categoría "otros")
+// ni lo que se parece a algo que ya anotaste a mano (mismo monto, ±1 día), para no duplicar.
+export function claroCorreo(e, m) {
+  if (m.noReconocido || m.confirmar || m.origen === 'uber' || !(m.monto > 0) || !m.fecha) return false;
+  const repetido = lista(e, 'movs').some(x => x.origen !== 'correo' && x.origen !== 'siri' && x.tipo === m.tipo
+    && x.moneda === m.moneda && Math.abs(x.monto - m.monto) < 0.5 && Math.abs(diasEntre(x.fecha, m.fecha)) <= 1);
+  if (repetido) return false;
+  if (m.tipo === 'ingreso' || m.origen === 'siri') return true;
+  return sugerirCorreo(e, m) !== 'otros';
+}
+// Anota de una vez los movimientos claros; devuelve cuántos.
+export function anotarClaros(e, movs) {
+  const claros = pendientesCorreo(e, movs).filter(m => claroCorreo(e, m));
+  for (const m of claros) aplicarRevision(e, m, { valor: sugerirCorreo(e, m) });
+  return claros.length;
+}
+
 // tipo_cambio.json del Action: {fecha: {compra, venta}}. Solo agrega fechas nuevas; devuelve cuáles.
 export function agregarTcAuto(e, tabla) {
   const nuevas = [];
