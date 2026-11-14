@@ -1,9 +1,10 @@
 // Guarda en caché SOLO los archivos de la app. Datos (.enc, .json de datos) y api.github.com van siempre por red.
 // Cada vez que se publique un cambio, subir VERSION para que los teléfonos bajen la versión nueva.
-const VERSION = 'finanzas-v10';
+const VERSION = 'finanzas-v11';
 const ARCHIVOS = [
   './', './index.html', './css/app.css', './manifest.json',
   './js/app.js', './js/cripto.js', './js/datos.js', './js/exportar.js', './js/graficos.js', './js/iconos.js', './js/sync.js',
+  './fuentes/lexend-latin.woff2', './fuentes/lexend-latin-ext.woff2',
   './iconos/icono-192.png', './iconos/icono-512.png', './iconos/apple-touch-icon.png',
 ];
 

@@ -219,7 +219,8 @@ async function cargarEstado() {
   errorBloqueo = ''; ultimo = Date.now();
   sincronizarAhora();
   if (accion) {
-    ui.tab = { gasto: 'movs', presupuesto: 'presup', correo: 'correo' }[accion] || 'inicio';
+    ui.tab = { presupuesto: 'presup', correo: 'correo' }[accion] || 'inicio';
+    if (accion === 'gasto') setTimeout(() => ACC.nuevo());
     accion = null; history.replaceState(null, '', location.pathname);
   }
   ui.anim = true; render();
@@ -300,8 +301,8 @@ function restaurarFoco() {
   if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
 }
 
-const ola = () => `<svg class="seigaiha" aria-hidden="true"><defs>
-  <g id="esc" style="fill:var(--fondo);stroke:currentColor;stroke-width:.5"><circle r="20"/><circle r="15"/><circle r="10"/><circle r="5"/></g>
+const ola = (relleno = 'var(--fondo)') => `<svg class="seigaiha" aria-hidden="true"><defs>
+  <g id="esc" style="fill:${relleno};stroke:currentColor;stroke-width:.5"><circle r="20"/><circle r="15"/><circle r="10"/><circle r="5"/></g>
   <pattern id="sg" width="40" height="20" patternUnits="userSpaceOnUse" patternTransform="scale(1.6)">
   <use href="#esc" x="0" y="0"/><use href="#esc" x="40" y="0"/><use href="#esc" x="20" y="10"/><use href="#esc" x="0" y="20"/><use href="#esc" x="40" y="20"/>
   </pattern></defs><rect width="100%" height="100%" fill="url(#sg)"/></svg>`;
@@ -355,11 +356,12 @@ function vBloqueo() {
     ${notaIOS()}</form></section>`;
 }
 
-const TABS = [['inicio', 'Inicio', 'casa'], ['presup', 'Presupuesto', 'pastel'], ['movs', 'Movimientos', 'lista'], ['metas', 'Metas', 'diana'], ['deudas', 'Deudas', 'recibo']];
+const TABS = [['inicio', 'Inicio', 'casa'], ['presup', 'Presupuesto', 'pastel'], null, ['movs', 'Movimientos', 'lista'], ['metas', 'Metas', 'diana']];
+const vMetasYDeudas = () => `${vMetas()}<div class="seccion">${vDeudas()}</div>`;
 function vApp() {
   const info = D.tcInfo(E, D.hoy()), al = alertasVisibles();
-  const vistas = { inicio: vInicio, presup: vPresup, movs: vMovs, metas: vMetas, deudas: vDeudas, ajustes: vAjustes, buscar: vBuscar, correo: vCorreo };
-  return `<div class="app">
+  const vistas = { inicio: vInicio, presup: vPresup, movs: vMovs, metas: vMetasYDeudas, ajustes: vAjustes, buscar: vBuscar, correo: vCorreo };
+  return `<div class="app ${ui.tab === 'inicio' ? 'en-inicio' : ''}">
   <header class="top">
     <span class="marca">Finanzas</span>
     <span class="tc-top">${info ? `$1 = ${D.tcFmt(info.valor)} · ${D.fechaCorta(info.fecha)}` : 'Sin tipo de cambio'}</span>
@@ -369,20 +371,18 @@ function vApp() {
   </header>
   ${al.length && ui.tab !== 'inicio' ? `<button class="alerta-top ${al[0].nivel}" data-a="tab" data-v="inicio">${esc(al[0].texto)}${al.length > 1 ? ` <b>+${al.length - 1}</b>` : ''}</button>` : ''}
   <main id="vista" class="${ui.anim ? 'anim' : ''}">${vistas[ui.tab]()}</main>
-  <nav class="tabs" aria-label="Secciones">${TABS.map(([id, n, ic]) =>
-    `<button data-a="tab" data-v="${id}" class="${ui.tab === id ? 'activa' : ''}" ${ui.tab === id ? 'aria-current="page"' : ''}>${icono(ic)}<span>${n}</span></button>`).join('')}</nav>
+  <nav class="tabs" aria-label="Secciones">${TABS.map(t => !t
+    ? `<button class="fab-col" data-a="nuevo"><span class="circulo">${icono('mas')}</span><span>Anotar</span></button>`
+    : `<button data-a="tab" data-v="${t[0]}" class="${ui.tab === t[0] ? 'activa' : ''}" ${ui.tab === t[0] ? 'aria-current="page"' : ''}><span class="pill">${icono(t[2])}</span><span>${t[1]}</span></button>`).join('')}</nav>
   </div>`;
 }
 
 const alertasVisibles = () => D.alertas(E);
-const kpi = (titulo, n, clase = '') =>
-  `<div class="tarjeta kpi ${clase}"><span class="et">${titulo}</span><strong class="grande ${n < 0 ? 'txt-rojo' : ''}">${crc(n)}</strong><span class="sec">(${dolares(n)})</span></div>`;
 const selMes = () => `<div class="mes-sel"><button class="ico-btn" data-a="mes" data-v="-1" aria-label="Mes anterior">‹</button><strong>${D.nombreMes(ui.mes)}</strong><button class="ico-btn" data-a="mes" data-v="1" aria-label="Mes siguiente">›</button></div>`;
 const icCat = c => `<span class="ic-cat" style="--c:${c?.color || '#828282'}">${icono(c?.icono || 'puntos')}</span>`;
 
 function vAlertas(al) {
-  if (!al.length) return '<p class="vacio">Todo en orden. No hay alertas.</p>';
-  return al.map(a => `<div class="alerta ${a.nivel}"><span>${esc(a.texto)}</span><button class="ico-btn chico" data-a="cerrarAlerta" data-v="${esc(a.clave)}" aria-label="Cerrar alerta">${icono('cerrar')}</button></div>`).join('');
+  return al.map(a => `<div class="alerta ${a.nivel}"><span class="alerta-ic" aria-hidden="true">!</span><span class="crece">${esc(a.texto)}</span><button class="ico-btn chico" data-a="cerrarAlerta" data-v="${esc(a.clave)}" aria-label="Cerrar alerta">${icono('cerrar')}</button></div>`).join('');
 }
 
 // ---------------- Inicio ----------------
@@ -392,25 +392,34 @@ function vInicio() {
   const pd = D.presupuestoDiario(E);
   const segs = D.cats(E).map(c => ({ ...c, valor: r.porCat[c.id] || 0 })).filter(s => s.valor > 0).sort((a, b) => b.valor - a.valor);
   const seis = D.ultimosMeses(mes, 6).map(m => { const x = D.resumenMes(E, m); return { et: D.mesCorto(m), a: x.ingresos, b: x.gastado }; });
-  return `<h1 class="saludo">${saludo}, <span class="acento">${esc(nombre())}</span></h1>
-  <p class="sec sub">${D.nombreMes(mes)}</p>
-  <div class="kpis">
-    ${kpi('Disponible', r.disponible, 'disp')}${kpi('Ingresos', r.ingresos)}${kpi('Gastado', r.gastado)}
-    ${kpi('Total ahorrado', D.totalAhorrado(E))}${kpi('Total que debo', D.totalDebo(E, tcHoy()))}
+  const nGastos = D.movsMes(E, mes).filter(m => m.tipo === 'gasto' && m.estado !== 'pendiente' && !m.reembolso).length;
+  const ahorrado = D.totalAhorrado(E), debo = D.totalDebo(E, tcHoy());
+  const fila = (ic, color, titulo, sub, valor, clase = '') => `<div class="fila-dato"><span class="ic-cat" style="--c:${color}">${icono(ic)}</span>
+    <div class="txt"><b>${titulo}</b><span class="sec">${sub}</span></div><strong class="${clase}">${valor}</strong></div>`;
+  return `<section class="hero">${ola('var(--hondo)')}
+    <p class="hero-saludo">${saludo}, ${esc(nombre())}</p>
+    <p class="hero-et">Disponible en ${D.nombreMes(mes).split(" ")[0].toLowerCase()}</p>
+    <p class="hero-num ${r.disponible < 0 ? 'neg' : ''}">${crc(r.disponible)}</p>
+    <p class="hero-usd">${dolares(r.disponible)}</p>
+    <p class="hero-sub">${pd.libre >= 0
+      ? `Podés gastar <b>${crc(pd.porDia)}</b> por día hasta fin de mes`
+      : `Te pasaste por <b>${crc(-pd.libre)}</b> contando lo que falta pagar`}</p>
+  </section>
+  ${vAlertas(alertasVisibles())}
+  <div class="tarjeta lista-datos">
+    ${fila('ingreso', 'var(--exito)', 'Ingresos', 'Este mes', crc(r.ingresos))}
+    ${fila('carrito', 'var(--acento-texto)', 'Gastado', `${nGastos} ${nGastos === 1 ? 'gasto' : 'gastos'} este mes`, crc(r.gastado))}
+    ${fila('diana', 'var(--principal)', 'Ahorrado', 'En tus metas', crc(ahorrado))}
+    ${fila('recibo', 'var(--aviso-texto)', 'Lo que debo', 'Deudas y préstamos', crc(debo), debo > 0 ? 'txt-rojo' : '')}
+    ${fila('sinpe', 'var(--principal)', 'SINPE', `Recibiste ${crc(r.sinpeRec)} y enviaste ${crc(r.sinpeEnv)}`, crc(r.sinpeRec - r.sinpeEnv))}
   </div>
-  <div class="tarjeta diario">${pd.libre >= 0
-    ? `Podés gastar <strong>${crc(pd.porDia)}</strong> por día hasta fin de mes <span class="sec">(${pd.dias} ${pd.dias === 1 ? 'día' : 'días'})</span>`
-    : `<span class="txt-rojo">Te pasaste por <strong>${crc(-pd.libre)}</strong> contando lo que falta pagar este mes.</span>`}</div>
   ${barraRapidos()}
   ${tarjetaHormiga(mes)}
-  <div class="tarjeta sinpe"><h2>${icono('sinpe')} SINPE del mes</h2>
-    <dl class="trio"><div><dt>Enviados</dt><dd>${crc(r.sinpeEnv)}</dd></div><div><dt>Recibidos</dt><dd>${crc(r.sinpeRec)}</dd></div><div><dt>Diferencia</dt><dd>${crc(r.sinpeRec - r.sinpeEnv)}</dd></div></dl></div>
   <div class="rejilla">
     <div class="tarjeta"><h2>Gasto por categoría</h2><div class="dona-caja">${G.dona(segs)}
       <ul class="leyenda">${segs.map(s => `<li data-tip="${esc(s.nombre)}: ${crc(s.valor)}"><i class="punto" style="--c:${s.color}"></i>${icono(s.icono)}<span>${esc(s.nombre)}</span><b>${crc(s.valor)}</b></li>`).join('')}</ul></div></div>
     <div class="tarjeta"><h2>Últimos 6 meses</h2>${G.barras(seis, 'Ingresos', 'Gastos')}</div>
-  </div>
-  <div class="tarjeta"><h2>Alertas</h2>${vAlertas(alertasVisibles())}</div>`;
+  </div>`;
 }
 
 const barraRapidos = () => {
@@ -484,21 +493,20 @@ function formMov(m = {}) {
     <input name="quien" list="quienes" placeholder="Comercio o persona (opcional)" value="${esc(m.quien)}" autocomplete="off">
     <datalist id="quienes">${quienes.map(q => `<option value="${esc(q)}">`).join('')}</datalist>
     <input name="nota" placeholder="Nota (opcional)" value="${esc(m.nota)}">
-    ${m.id ? '<button class="btn">Guardar cambios</button>'
+    ${m.id ? `<div class="fila"><button class="btn crece">Guardar cambios</button><button type="button" class="btn peligro" data-a="borrarMov" data-v="${m.id}">Borrar</button></div>`
       : `<div class="fila"><button class="btn crece">Guardar</button><button type="button" class="btn sec-btn solo-gasto" data-a="dividir">Dividir</button></div>`}</form>`;
 }
 
 function filaMov(m) {
   const c = E.cats[m.cat], ing = m.tipo === 'ingreso';
   const titulo = m.quien || (ing ? D.FUENTES[m.fuente] || 'Ingreso' : c?.nombre || 'Otros');
-  const sub = [D.fechaCorta(m.fecha), m.medio, m.quien ? (ing ? D.FUENTES[m.fuente] : c?.nombre) : '', m.nota].filter(Boolean).map(esc).join(' · ');
+  const sub = [D.fechaCorta(m.fecha), m.quien ? (ing ? D.FUENTES[m.fuente] : c?.nombre) : m.medio, m.nota].filter(Boolean).map(esc).join(' · ');
   const pend = m.estado === 'pendiente';
-  return `<div class="mov ${pend ? 'pend' : ''}">${ing ? `<span class="ic-cat" style="--c:var(--exito)">${icono(m.medio === 'SINPE' ? 'sinpe' : 'ingreso')}</span>` : icCat(c)}
+  return `<div class="mov ${pend ? 'pend' : ''}" data-a="editarMov" data-v="${m.id}" role="button" tabindex="0">${ing ? `<span class="ic-cat" style="--c:var(--exito)">${icono(m.medio === 'SINPE' ? 'sinpe' : 'ingreso')}</span>` : icCat(c)}
     <div class="txt"><b>${esc(titulo)}</b><span class="sec">${sub}${m.origen === 'correo' ? ' <span class="chip">desde correo</span>' : ''}${m.origen === 'siri' ? ' <span class="chip">desde Siri</span>' : ''}${pend ? ' <span class="chip pend">pendiente</span>' : m.rec ? ` <span class="chip">${ing ? 'fijo' : 'recurrente'}</span>` : ''}${m.reembolso ? ` <span class="chip">${ing ? 'te pagó lo que te debía' : 'pago de lo que debías'}</span>` : ''}${m.dividido ? ` <span class="chip">${m.dividido === 'yo' ? 'dividido' : `pagó ${esc(m.dividido)}`}</span>` : ''}</span></div>
     <div class="m ${ing ? 'pos' : ''}">${ing ? '+' : ''}${monto(m.monto, m.moneda)}${m.moneda === 'USD' && !pend ? `<span class="sec">${crc(D.aCRC(m))}</span>` : ''}${m.total ? `<span class="sec">de ${monto(m.total, m.moneda)}</span>` : ''}</div>
     ${pend ? `<button class="ico-btn chico confirmar" data-a="confirmarMov" data-v="${m.id}" aria-label="Confirmar" title="Confirmar">${icono('check')}</button>` : ''}
-    <button class="ico-btn chico" data-a="editarMov" data-v="${m.id}" aria-label="Editar">${icono('lapiz')}</button>
-    <button class="ico-btn chico" data-a="borrarMov" data-v="${m.id}" aria-label="Borrar">${icono('basura')}</button></div>`;
+    </div>`;
 }
 
 function vMovs() {
@@ -512,14 +520,11 @@ function vMovs() {
     .filter(m => (!ui.fCat || m.cat === ui.fCat) && (!ui.fMedio || m.medio === ui.fMedio))
     .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.upd - a.upd);
   return `${pest}
-  <div class="rejilla movs-rej">
-    <div class="tarjeta"><h2>Nuevo movimiento</h2>${barraRapidos()}${formMov()}
-      ${botonCorreo()}</div>
+  ${botonCorreo()}
     <div class="tarjeta">${selMes()}
-      <div class="filtros"><select data-filtro="fCat" aria-label="Filtrar por categoría"><option value="">Todas las categorías</option>${D.cats(E).map(c => `<option value="${c.id}" ${ui.fCat === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}</select>
-      <select data-filtro="fMedio" aria-label="Filtrar por medio"><option value="">Todos los medios</option>${D.MEDIOS.map(x => `<option ${ui.fMedio === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
-      ${movs.length ? movs.map(filaMov).join('') : '<p class="vacio">No hay movimientos con esos filtros.</p>'}</div>
-  </div>`;
+      <div class="filtros"><select data-filtro="fCat" aria-label="Filtrar por categoría"><option value="">Categorías</option>${D.cats(E).map(c => `<option value="${c.id}" ${ui.fCat === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}</select>
+      <select data-filtro="fMedio" aria-label="Filtrar por medio"><option value="">Medios</option>${D.MEDIOS.map(x => `<option ${ui.fMedio === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+      ${movs.length ? movs.map(filaMov).join('') : '<p class="vacio">No hay movimientos con esos filtros. Tocá Anotar para agregar uno.</p>'}</div>`;
 }
 
 function vSinpe() {
@@ -955,11 +960,13 @@ const ACC = {
   cerrarAlerta: v => cambiar(() => D.poner(E, 'alertasCerradas', { id: v })),
   cerrarDlg: () => dlg.close(),
   deshacer: () => { toast._deshacer?.(); toast.className = ''; },
+  nuevo: () => abrirDialogo(`<h2>Anotar</h2>${barraRapidos()}${formMov()}`),
   nuevoIngreso: () => abrirDialogo(`<h2>Nuevo ingreso</h2>${formMov({ tipo: 'ingreso', medio: 'SINPE', fecha: ui.mes === D.mesDe(D.hoy()) ? D.hoy() : ui.mes + '-01' })}`),
   editarMov: v => abrirDialogo(`<h2>Editar movimiento</h2>${formMov(E.movs[v])}`),
   borrarMov: v => {
     const rel = D.lista(E, 'compartidas').filter(c => c.movId === v); // lo que te deben o debés por este gasto, o el abono de este pago
     if (!confirm(`¿Borrar este movimiento?${rel.length ? ' También se borra lo que quedó en "Me deben / Debo" por él.' : ''}`)) return;
+    if (dlg.open) dlg.close();
     cambiar(() => { D.quitar(E, 'movs', v); rel.forEach(c => D.quitar(E, 'compartidas', c.id)); });
     aviso('Movimiento borrado', () => cambiar(() => { D.poner(E, 'movs', E.movs[v]); rel.forEach(c => D.poner(E, 'compartidas', E.compartidas[c.id])); }));
   },
@@ -1004,6 +1011,7 @@ const ACC = {
   },
   rapido: v => {
     const b = E.rapidos[v]; let m;
+    if (dlg.open) dlg.close();
     cambiar(() => { m = D.usarRapido(E, b); });
     aviso(`${b.nombre} anotado: ${monto(b.monto, b.moneda)}`, () => cambiar(() => D.quitar(E, 'movs', m.id)));
   },
@@ -1264,6 +1272,10 @@ const FORM = {
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-a]');
   if (b && !b.disabled) { e.preventDefault(); ACC[b.dataset.a]?.(b.dataset.v, b); }
+});
+// las filas que se tocan para editar también abren con Enter o espacio desde el teclado
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[role=button][data-a]')) { e.preventDefault(); e.target.click(); }
 });
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 document.addEventListener('submit', e => {
