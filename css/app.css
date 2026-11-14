@@ -361,3 +361,4 @@ dialog h2 { font-size: 17px; color: var(--texto); margin-right: 36px; }
 .lbl-fila select { width: auto; }
 .fila-btn { display: grid; gap: 2px; width: 100%; text-align: left; padding: 10px 0; background: none; border: 0; border-bottom: 1px solid var(--borde); color: inherit; font: inherit; cursor: pointer; }
 .fila-btn:last-child { border-bottom: 0; }
+.rev .razon { display: block; font-size: 13px; color: var(--aviso-texto); margin-top: 2px; }

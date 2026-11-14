@@ -365,6 +365,14 @@ try {
   const zx = new Uint8Array(await X.xlsx(['A'], [['x']]).arrayBuffer());
   ok('xlsx: sale un zip', zx[0] === 0x50 && zx[1] === 0x4B && zx.length > 500);
 
+  // SINPE a una persona sin categoría: se pregunta una vez y después se anota solo, aunque escojas "Otros"
+  const es = D.estadoNuevo('Sinpe', 500);
+  const sp = n => ({ id: 'sp' + n, origen: 'kash', tipo: 'gasto', medio: 'SINPE', monto: 2500 + n, moneda: 'CRC', fecha: '2026-11-0' + n, quien: 'JUAN PEREZ', cat: 'otros' });
+  ok('SINPE nuevo: dice por qué lo pregunta', /SINPE/.test(D.razonRevision(es, sp(1)) || ''));
+  D.aplicarRevision(es, sp(1), { valor: 'otros' });
+  ok('SINPE: después de confirmarlo una vez se anota solo', D.claroCorreo(es, sp(2)) && D.anotarClaros(es, [sp(2)]) === 1);
+  ok('recibo de Uber sin cobro: dice por qué', /Uber/.test(D.razonRevision(es, { ...sp(3), origen: 'uber', quien: 'Uber Eats', cat: 'restaurantes' }) || ''));
+
   const nuevas = D.agregarTcAuto(ec, { '2026-11-12': { compra: 440, venta: 450 }, '2026-11-13': { compra: 0, venta: 451 } });
   ok('tipo de cambio automático: solo fechas válidas', nuevas.join() === '2026-11-12' && D.tcDe(ec, '2026-11-12') === 450);
   ok('tipo de cambio: el manual le gana al automático', (D.poner(ec, 'tcManual', { id: '2026-11-12', valor: 455 }), D.tcDe(ec, '2026-11-12') === 455));

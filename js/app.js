@@ -825,8 +825,9 @@ function filaRevision(m) {
     <span class="nota">Si era un movimiento, anotalo a mano. Al confirmar se quita de esta lista.</span></div></div>`;
   const ing = m.tipo === 'ingreso', sug = D.sugerirCorreo(E, m);
   const dd = sug.startsWith('deuda:') ? sug.slice(6) : '';
-  const chips = [m.origen === 'siri' ? 'desde Siri' : 'desde correo', m.confirmar ? '¿viaje o Uber Eats? revisá la categoría' : '',
-    dd ? (ing ? `parece que ${dd} te está pagando lo que te debe` : `parece el pago de lo que le debés a ${dd}`) : ''].filter(Boolean);
+  const chips = [m.origen === 'siri' ? 'desde Siri' : 'desde correo',
+    dd && !ing ? `parece el pago de lo que le debés a ${dd}` : ''].filter(Boolean);
+  const razon = D.razonRevision(E, m);
   // personas con cuentas pendientes: el movimiento se puede anotar como pago de esa cuenta (no cuenta como ingreso ni gasto)
   const deudas = D.saldosCompartidas(E).filter(s => s.sentido === (ing ? 'meDeben' : 'debo') && s.saldo > 0 && s.moneda === m.moneda);
   const opDeudas = deudas.length ? `<optgroup label="Cuenta compartida">${deudas.map(s => `<option value="deuda:${esc(s.persona)}" ${sug === `deuda:${s.persona}` ? 'selected' : ''}>${ing
@@ -838,6 +839,7 @@ function filaRevision(m) {
     <div class="txt"><b>${esc(m.quien || (ing ? 'SINPE recibido' : m.medio === 'SINPE' ? 'SINPE enviado' : 'Gasto'))}</b>
       <span class="sec">${[m.fecha ? D.fechaCorta(m.fecha) : '', m.hora, ing ? 'Ingreso' : 'Gasto', m.medio].filter(Boolean).map(esc).join(' · ')}</span>
       ${m.nota ? `<span class="sec">${esc(m.nota)}</span>` : ''}
+      ${razon ? `<span class="razon">${esc(razon)}</span>` : ''}
       <span>${chips.map(c => `<span class="chip">${esc(c)}</span>`).join(' ')}</span></div>
     <div class="campos"><div class="fila"><input name="monto|${m.id}" inputmode="decimal" value="${D.numPlano(m.monto, m.moneda)}" aria-label="Monto">
       <span class="moneda-fija">${m.moneda === 'USD' ? '$' : '₡'}</span></div>${sel}

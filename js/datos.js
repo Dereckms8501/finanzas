@@ -515,7 +515,8 @@ export function aplicarRevision(e, m, { descartar, monto, valor }) {
     return pagarCompartida(e, ing ? 'meDeben' : 'debo', valor.slice(6), { id: `c-${m.id}`, monto: monto > 0 ? monto : m.monto, moneda: m.moneda,
       fecha: m.fecha, medio: m.medio, quien: m.quien, nota: m.nota, origen, correoId: m.id });
   const rc = recurrenteDe(e, m), sug = sugerirCorreo(e, m);
-  if (m.quien && !rc && valor !== sug && !sug.startsWith('deuda:')) poner(e, 'reglas', { id: claveRegla(m.tipo, m.quien), valor }); // aprende
+  // aprende; "Otros" también se guarda, si no ese comercio o esa persona se preguntaba siempre
+  if (m.quien && !rc && (valor !== sug || valor === 'otros') && !sug.startsWith('deuda:')) poner(e, 'reglas', { id: claveRegla(m.tipo, m.quien), valor });
   const mov = {
     id: `c-${m.id}`, tipo: m.tipo, monto: monto > 0 ? monto : m.monto, moneda: m.moneda, fecha: m.fecha, medio: m.medio,
     quien: m.quien || '', nota: m.nota || '', cat: ing ? null : valor, fuente: ing ? valor : null,
@@ -532,18 +533,25 @@ export function aplicarRevision(e, m, { descartar, monto, valor }) {
 // ¿Se puede anotar sin preguntar? Sí: ingresos (SINPE recibido), lo que vino de Siri, y gastos con regla aprendida
 // o categoría clara. No: lo dudoso (Uber sin recibo, recibo de Uber sin cobro del banco, categoría "otros")
 // ni lo que se parece a algo que ya anotaste a mano (mismo monto, ±1 día), para no duplicar.
-export function claroCorreo(e, m) {
-  if (m.noReconocido || !(m.monto > 0) || !m.fecha) return false;
-  if (recurrenteDe(e, m)) return true; // calza con un recurrente o ingreso fijo: se une con su pendiente
+// Por qué un movimiento del correo pasa por la revisión; null = está claro y se anota solo.
+export function razonRevision(e, m) {
+  if (m.noReconocido) return 'No pude leer este correo';
+  if (!(m.monto > 0) || !m.fecha) return 'Le falta el monto o la fecha';
+  if (recurrenteDe(e, m)) return null; // calza con un recurrente o ingreso fijo: se une con su pendiente
   const dd = deudaDe(e, m); // pagarle a quien le debés se marca solo; lo que te pagan a vos pasa por la revisión
-  if (dd) return dd.sentido === 'debo';
-  if (m.confirmar || m.origen === 'uber') return false;
+  if (dd) return dd.sentido === 'debo' ? null : `${dd.persona} te debe plata: ¿es el pago?`;
+  if (m.confirmar) return '¿Fue un viaje o Uber Eats?';
+  if (m.origen === 'uber') return 'Recibo de Uber sin el cobro del banco: revisá que no lo anotaras ya';
   const repetido = lista(e, 'movs').some(x => x.origen !== 'correo' && x.origen !== 'siri' && x.tipo === m.tipo
     && x.moneda === m.moneda && Math.abs(x.monto - m.monto) < 0.5 && Math.abs(diasEntre(x.fecha, m.fecha)) <= 1);
-  if (repetido) return false;
-  if (m.tipo === 'ingreso' || m.origen === 'siri') return true;
-  return sugerirCorreo(e, m) !== 'otros';
+  if (repetido) return 'Ya anotaste uno igual ese día: ¿es el mismo?';
+  if (m.tipo === 'ingreso' || m.origen === 'siri') return null;
+  const regla = m.quien && e.reglas[claveRegla(m.tipo, m.quien)];
+  if (sugerirCorreo(e, m) !== 'otros' || (regla && !regla.del)) return null; // "Otros" que vos ya escogiste también vale
+  return m.medio === 'SINPE' ? 'No sé en qué categoría va este SINPE. Escogela una vez y después lo anoto solo'
+    : 'Comercio nuevo. Escogé la categoría una vez y después lo anoto solo';
 }
+export const claroCorreo = (e, m) => !razonRevision(e, m);
 // Anota de una vez los movimientos claros; devuelve cuántos.
 export function anotarClaros(e, movs) {
   const claros = pendientesCorreo(e, movs).filter(m => claroCorreo(e, m));
