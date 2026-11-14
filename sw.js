@@ -1,6 +1,6 @@
 // Guarda en caché SOLO los archivos de la app. Datos (.enc, .json de datos) y api.github.com van siempre por red.
 // Cada vez que se publique un cambio, subir VERSION para que los teléfonos bajen la versión nueva.
-const VERSION = 'finanzas-v5';
+const VERSION = 'finanzas-v6';
 const ARCHIVOS = [
   './', './index.html', './css/app.css', './manifest.json',
   './js/app.js', './js/cripto.js', './js/datos.js', './js/graficos.js', './js/iconos.js', './js/sync.js',

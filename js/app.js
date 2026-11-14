@@ -18,7 +18,7 @@ let traer = null;   // datos bajados de GitHub en "Ya tengo datos", antes de pon
 let respaldo = null; // respaldo leído, esperando su contraseña
 let correo = null;   // lista descifrada de correo.enc (solo en memoria): {generado, movs}
 const lector = { ultimo: 0, error: '', avisados: 0, sinArchivo: false };
-const ui = { tab: 'inicio', mes: D.mesDe(D.hoy()), vistaMov: 'lista', fCat: '', fMedio: '', qSinpe: '', q: '', anim: true, ult: { moneda: 'CRC', medio: 'Tarjeta' } };
+const ui = { tab: 'inicio', mes: D.mesDe(D.hoy()), vistaMov: 'lista', fCat: '', fMedio: '', qSinpe: '', q: '', diaCal: '', anim: true, ult: { moneda: 'CRC', medio: 'Tarjeta' } };
 let accion = new URLSearchParams(location.search).get('accion');
 
 const esIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -99,7 +99,8 @@ async function traerCorreo(manual = false) {
     lector.error = e instanceof S.ErrorSync ? e.message : 'No pude abrir los movimientos del correo. ¿La llave pública en GitHub es la de esta app?';
   }
   if (!mk) return;
-  const solos = D.anotarClaros(E, correo?.movs);
+  const nuevosRec = D.generarPendientes(E), solos = D.anotarClaros(E, correo?.movs);
+  if (nuevosRec && !solos) guardar();
   if (solos) { guardar(); aviso(`Anoté ${solos} ${solos === 1 ? 'movimiento' : 'movimientos'} del correo`); }
   const n = D.pendientesCorreo(E, correo?.movs).length;
   if (n && n > lector.avisados) aviso(`Tenés ${n} ${n === 1 ? 'movimiento nuevo' : 'movimientos nuevos'} del correo`);
@@ -208,6 +209,7 @@ async function abrirFaceID() {
 }
 async function cargarEstado() {
   E = D.completar(await C.descifrar(mk, await D.leer('estado')));
+  if (D.generarPendientes(E)) guardar(); // recurrentes e ingresos fijos que ya llegaron a su fecha
   cfgSync = meta.sync ? await C.descifrar(mk, meta.sync) : null;
   sync.cambios = sync.hecho = 0;
   errorBloqueo = ''; ultimo = Date.now();
@@ -451,17 +453,21 @@ function filaMov(m) {
   const c = E.cats[m.cat], ing = m.tipo === 'ingreso';
   const titulo = m.quien || (ing ? D.FUENTES[m.fuente] || 'Ingreso' : c?.nombre || 'Otros');
   const sub = [D.fechaCorta(m.fecha), m.medio, m.quien ? (ing ? D.FUENTES[m.fuente] : c?.nombre) : '', m.nota].filter(Boolean).map(esc).join(' · ');
-  return `<div class="mov">${ing ? `<span class="ic-cat" style="--c:var(--exito)">${icono(m.medio === 'SINPE' ? 'sinpe' : 'ingreso')}</span>` : icCat(c)}
-    <div class="txt"><b>${esc(titulo)}</b><span class="sec">${sub}${m.origen === 'correo' ? ' <span class="chip">desde correo</span>' : ''}${m.origen === 'siri' ? ' <span class="chip">desde Siri</span>' : ''}</span></div>
-    <div class="m ${ing ? 'pos' : ''}">${ing ? '+' : ''}${monto(m.monto, m.moneda)}${m.moneda === 'USD' ? `<span class="sec">${crc(D.aCRC(m))}</span>` : ''}</div>
+  const pend = m.estado === 'pendiente';
+  return `<div class="mov ${pend ? 'pend' : ''}">${ing ? `<span class="ic-cat" style="--c:var(--exito)">${icono(m.medio === 'SINPE' ? 'sinpe' : 'ingreso')}</span>` : icCat(c)}
+    <div class="txt"><b>${esc(titulo)}</b><span class="sec">${sub}${m.origen === 'correo' ? ' <span class="chip">desde correo</span>' : ''}${m.origen === 'siri' ? ' <span class="chip">desde Siri</span>' : ''}${pend ? ' <span class="chip pend">pendiente</span>' : m.rec ? ` <span class="chip">${ing ? 'fijo' : 'recurrente'}</span>` : ''}</span></div>
+    <div class="m ${ing ? 'pos' : ''}">${ing ? '+' : ''}${monto(m.monto, m.moneda)}${m.moneda === 'USD' && !pend ? `<span class="sec">${crc(D.aCRC(m))}</span>` : ''}</div>
+    ${pend ? `<button class="ico-btn chico confirmar" data-a="confirmarMov" data-v="${m.id}" aria-label="Confirmar" title="Confirmar">${icono('check')}</button>` : ''}
     <button class="ico-btn chico" data-a="editarMov" data-v="${m.id}" aria-label="Editar">${icono('lapiz')}</button>
     <button class="ico-btn chico" data-a="borrarMov" data-v="${m.id}" aria-label="Borrar">${icono('basura')}</button></div>`;
 }
 
 function vMovs() {
-  const pest = `<div class="seg pestañas">${[['lista', 'Lista'], ['sinpe', 'SINPE']].map(([k, n]) =>
+  const pest = `<div class="seg pestañas">${[['lista', 'Lista'], ['sinpe', 'SINPE'], ['rec', 'Recurrentes'], ['cal', 'Calendario']].map(([k, n]) =>
     `<button data-a="vistaMov" data-v="${k}" class="${ui.vistaMov === k ? 'activa' : ''}">${n}</button>`).join('')}</div>`;
   if (ui.vistaMov === 'sinpe') return pest + vSinpe();
+  if (ui.vistaMov === 'rec') return pest + vRecurrentes();
+  if (ui.vistaMov === 'cal') return pest + vCalendario();
   const movs = D.movsMes(E, ui.mes)
     .filter(m => (!ui.fCat || m.cat === ui.fCat) && (!ui.fMedio || m.medio === ui.fMedio))
     .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.upd - a.upd);
@@ -490,6 +496,56 @@ function vSinpe() {
     ${filas.map(m => `<tr><td>${D.fechaCorta(m.fecha)}</td><td>${esc(m.quien || '—')}</td><td>${m.tipo === 'gasto' ? 'Enviado' : '<span class="txt-verde">Recibido</span>'}</td><td>${monto(m.monto, m.moneda)}</td></tr>`).join('')}
     </tbody></table>` : '<p class="vacio">No hay SINPE aquí.</p>'}
     <dl class="trio"><div><dt>Total enviado</dt><dd>${crc(env)}</dd></div><div><dt>Total recibido</dt><dd>${crc(rec)}</dd></div><div><dt>Diferencia</dt><dd>${crc(rec - env)}</dd></div></dl></div>`;
+}
+
+// ---------------- Recurrentes y calendario ----------------
+const nombreMesSolo = n => D.nombreMes(`2000-${String(n).padStart(2, '0')}`).split(' ')[0];
+const descFrec = r => r.frecuencia === 'semanal' ? `Cada ${D.DIAS_SEMANA[r.diaSemana]}`
+  : r.frecuencia === 'quincenal' ? `Días ${r.dias[0]} y ${r.dias[1]} de cada mes`
+  : r.frecuencia === 'anual' ? `Cada año, el ${r.dias[0]} de ${nombreMesSolo(r.mes).toLowerCase()}`
+  : `Día ${r.dias[0]} de cada mes`;
+
+function vRecurrentes() {
+  const todos = D.lista(E, 'recurrentes'), t = tcHoy(), h = D.hoy();
+  const bloque = (clase, titulo, vacio) => {
+    const rs = todos.filter(r => D.tipoRec(r) === clase).sort((a, b) => a.nombre.localeCompare(b.nombre));
+    const total = rs.reduce((s, r) => s + D.mensualRec(r) * (r.moneda === 'USD' ? t : 1), 0);
+    const ing = clase === 'ingreso';
+    return `<div class="tarjeta"><div class="cab"><h2>${titulo}</h2><button class="btn chico" data-a="nuevoRec" data-v="${clase}">${icono('mas')} Nuevo</button></div>
+      ${rs.length ? `<p class="sec">Total por mes: <strong>${crc(total)}</strong> <span class="sec">(${dolares(total)})</span></p>` : `<p class="vacio">${vacio}</p>`}
+      ${rs.map(r => {
+        const prox = D.fechasRec(r, h, D.sumarDias(h, 366))[0];
+        return `<div class="mov">${ing ? `<span class="ic-cat" style="--c:var(--exito)">${icono('ingreso')}</span>` : icCat(E.cats[r.cat])}
+          <div class="txt"><b>${esc(r.nombre)}</b><span class="sec">${esc(descFrec(r))}${prox ? ` · próximo: ${D.fechaCorta(prox)}` : ''}${r.texto ? ` · en el correo: "${esc(r.texto)}"` : ''}</span></div>
+          <div class="m ${ing ? 'pos' : ''}">${monto(r.monto, r.moneda)}</div>
+          <button class="ico-btn chico" data-a="editarRec" data-v="${r.id}" aria-label="Editar">${icono('lapiz')}</button>
+          <button class="ico-btn chico" data-a="borrarRec" data-v="${r.id}" aria-label="Borrar">${icono('basura')}</button></div>`;
+      }).join('')}</div>`;
+  };
+  return `<div class="rejilla">${bloque('gasto', 'Gastos recurrentes', 'Anotá aquí tus pagos fijos: Spotify, el plan del celular, el gym…')}
+    ${bloque('ingreso', 'Ingresos fijos', 'Anotá la plata que te entra siempre: beca, salario, ayuda familiar…')}</div>
+  <p class="nota">Cuando llega la fecha, aparece en Movimientos como "pendiente" hasta que lo confirmés. Si el cobro o el SINPE llega por correo con el texto que pusiste, se confirma solo.</p>`;
+}
+
+const ESTADO_EV = { pendiente: 'pendiente de confirmar', atrasado: 'sin anotar', proximo: 'próximo' };
+const NOMBRE_EV = { gasto: 'Gasto recurrente', ingreso: 'Ingreso fijo', deuda: 'Cuota de deuda' };
+function vCalendario() {
+  const ev = D.eventosMes(E, ui.mes), h = D.hoy();
+  const blancos = (D.diaSemana(`${ui.mes}-01`) + 6) % 7; // la semana empieza el lunes
+  const celdas = '<span></span>'.repeat(blancos) + Array.from({ length: D.diasEnMes(ui.mes) }, (_, i) => {
+    const f = `${ui.mes}-${String(i + 1).padStart(2, '0')}`, es = ev[f] || [];
+    return `<button class="dia ${f === h ? 'hoy' : ''} ${f === ui.diaCal ? 'sel' : ''}" data-a="diaCal" data-v="${f}" aria-label="${D.fechaLarga(f)}${es.length ? `: ${es.map(x => x.nombre).join(', ')}` : ''}">
+      <span>${i + 1}</span><i>${[...new Set(es.map(x => x.tipo))].map(t => `<b class="p-${t}"></b>`).join('')}</i></button>`;
+  }).join('');
+  const sel = ui.diaCal?.startsWith(ui.mes) ? ui.diaCal : '';
+  const filas = Object.entries(ev).filter(([f]) => !sel || f === sel).sort(([a], [b]) => a.localeCompare(b))
+    .flatMap(([f, xs]) => xs.map(x => `<div class="mov"><span class="punto-ev p-${x.tipo}"></span>
+      <div class="txt"><b>${esc(x.nombre)}</b><span class="sec">${D.fechaCorta(f)} · ${NOMBRE_EV[x.tipo]}</span></div>
+      <div class="m ${x.tipo === 'ingreso' ? 'pos' : ''}">${monto(x.monto, x.moneda)}<span class="sec ${x.estado === 'listo' ? 'txt-verde' : x.estado === 'atrasado' ? 'txt-rojo' : ''}">${x.estado === 'listo' ? (x.tipo === 'ingreso' ? 'recibido' : 'pagado') : ESTADO_EV[x.estado]}</span></div></div>`)).join('');
+  return `<div class="tarjeta">${selMes()}
+    <div class="cal">${['L', 'M', 'K', 'J', 'V', 'S', 'D'].map(d => `<span class="et">${d}</span>`).join('')}${celdas}</div>
+    <div class="fila-ley">${Object.entries(NOMBRE_EV).map(([t, n]) => `<span class="sec"><b class="punto-ev p-${t}"></b> ${n}</span>`).join('')}</div></div>
+  <div class="tarjeta"><h2>${sel ? D.fechaLarga(sel) : 'Todo el mes'}</h2>${filas || `<p class="vacio">${sel ? 'Nada este día.' : 'Nada este mes. Agregá tus recurrentes en la pestaña Recurrentes.'}</p>`}</div>`;
 }
 
 // ---------------- Metas ----------------
@@ -691,7 +747,27 @@ const formDeuda = (d = {}) => `<h2>${d.id ? 'Editar deuda' : 'Nueva deuda'}</h2>
   <label>Interés anual % (opcional)<input name="tasa" inputmode="decimal" value="${d.tasa ? String(d.tasa).replace('.', ',') : ''}"></label></div>
   <label>Desde<input name="inicio" type="date" value="${d.inicio || D.hoy()}" required></label>
   <button class="btn">Guardar</button></form>`;
-const formMontoFecha = (titulo, f, id, valor, moneda) => `<h2>${esc(titulo)}</h2><form data-f="${f}" data-id="${id}" class="form-col">
+function formRec(r = {}) {
+  const ing = r.clase === 'ingreso', frec = r.frecuencia || 'mensual', mon = r.moneda || 'CRC';
+  const opc = (obj, actual) => Object.entries(obj).map(([k, v]) => `<option value="${k}" ${String(actual) === String(k) ? 'selected' : ''}>${esc(v)}</option>`).join('');
+  return `<h2>${r.id ? 'Editar' : 'Nuevo'} ${ing ? 'ingreso fijo' : 'gasto recurrente'}</h2>
+  <form data-f="rec" data-id="${r.id || ''}" data-clase="${ing ? 'ingreso' : 'gasto'}" class="form-col form-rec">
+    <input name="nombre" placeholder="${ing ? 'Nombre (ej. Beca)' : 'Nombre (ej. Spotify)'}" value="${esc(r.nombre)}" required>
+    <div class="fila"><input name="monto" inputmode="decimal" placeholder="Monto" value="${r.monto ? D.numPlano(r.monto, mon) : ''}" required>
+      <select name="moneda" aria-label="Moneda">${opc({ CRC: '₡', USD: '$' }, mon)}</select></div>
+    ${ing ? `<select name="fuente" aria-label="Fuente">${opc(D.FUENTES, r.fuente || 'beca')}</select>`
+      : `<select name="cat" aria-label="Categoría">${opc(Object.fromEntries(D.cats(E).map(c => [c.id, c.nombre])), r.cat)}</select>`}
+    <select name="medio" aria-label="Medio">${opc(Object.fromEntries(D.MEDIOS.map(x => [x, x])), r.medio || (ing ? 'SINPE' : 'Tarjeta'))}</select>
+    <label>Frecuencia<select name="frecuencia">${opc(D.FRECUENCIAS, frec)}</select></label>
+    <div class="fila f-dias"><label>Día<input name="dia1" type="number" min="1" max="31" value="${r.dias?.[0] || ''}"></label>
+      <label class="f-dia2">Segundo día<input name="dia2" type="number" min="1" max="31" value="${r.dias?.[1] || ''}"></label>
+      <label class="f-mes">Mes<select name="mes">${opc(Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, nombreMesSolo(i + 1)])), r.mes || 1)}</select></label></div>
+    <label class="f-sem">Día de la semana<select name="diaSemana">${opc(Object.fromEntries([1, 2, 3, 4, 5, 6, 0].map(i => [i, D.DIAS_SEMANA[i]])), r.diaSemana ?? 1)}</select></label>
+    <label>Texto en el correo (opcional)<input name="texto" value="${esc(r.texto)}" placeholder="${ing ? 'Ej. el nombre de quien te manda el SINPE' : 'Ej. SPOTIFY'}" autocapitalize="characters"></label>
+    <p class="nota">Si un cobro o SINPE del correo trae este texto, con un monto parecido (5 % de diferencia o menos) y a 3 días o menos de la fecha, se une solo con este ${ing ? 'ingreso' : 'pago'} y no se duplica.</p>
+    <button class="btn">Guardar</button></form>`;
+}
+const formMontoFecha =(titulo, f, id, valor, moneda) => `<h2>${esc(titulo)}</h2><form data-f="${f}" data-id="${id}" class="form-col">
   <div class="fila"><input name="monto" inputmode="decimal" placeholder="Monto" value="${valor ? D.numPlano(valor, moneda) : ''}" required autofocus><span class="moneda-fija">${moneda === 'USD' ? '$' : '₡'}</span></div>
   <input name="fecha" type="date" value="${D.hoy()}" required><button class="btn">Guardar</button></form>`;
 
@@ -717,6 +793,17 @@ const ACC = {
   nuevoIngreso: () => abrirDialogo(`<h2>Nuevo ingreso</h2>${formMov({ tipo: 'ingreso', medio: 'SINPE', fecha: ui.mes === D.mesDe(D.hoy()) ? D.hoy() : ui.mes + '-01' })}`),
   editarMov: v => abrirDialogo(`<h2>Editar movimiento</h2>${formMov(E.movs[v])}`),
   borrarMov: v => { if (confirm('¿Borrar este movimiento?')) { cambiar(() => D.quitar(E, 'movs', v)); aviso('Movimiento borrado', () => cambiar(() => D.poner(E, 'movs', E.movs[v]))); } },
+  confirmarMov: v => { cambiar(() => D.confirmarMov(E, E.movs[v])); aviso('Confirmado'); },
+  nuevoRec: v => abrirDialogo(formRec({ clase: v })),
+  editarRec: v => abrirDialogo(formRec(E.recurrentes[v])),
+  borrarRec: v => {
+    if (!confirm(`¿Borrar "${E.recurrentes[v].nombre}"? Los pendientes sin confirmar también se borran; lo que ya confirmaste se queda.`)) return;
+    cambiar(() => {
+      D.quitar(E, 'recurrentes', v);
+      D.lista(E, 'movs').filter(m => m.estado === 'pendiente' && m.rec?.startsWith(`r-${v}-`)).forEach(m => D.quitar(E, 'movs', m.id));
+    });
+  },
+  diaCal: v => { ui.diaCal = ui.diaCal === v ? '' : v; render(); },
   nuevaMeta: () => abrirDialogo(formMeta()),
   editarMeta: v => abrirDialogo(formMeta(E.metas[v])),
   borrarMeta: v => { if (confirm('¿Borrar esta meta y todos sus abonos?')) cambiar(() => { D.quitar(E, 'metas', v); D.abonosMeta(E, v).forEach(a => D.quitar(E, 'abonos', a.id)); }); },
@@ -802,6 +889,21 @@ const FORM = {
     if (dlg.open) dlg.close();
     cambiar(() => D.poner(E, 'movs', m));
     aviso(previo.id ? 'Cambios guardados' : 'Movimiento guardado');
+  },
+  rec: f => {
+    const valor = D.parseMonto(f.monto.value), frec = f.frecuencia.value, ing = f.dataset.clase === 'ingreso';
+    const d1 = +f.dia1.value, d2 = +f.dia2.value, diaOk = d => Number.isInteger(d) && d >= 1 && d <= 31;
+    if (!(valor > 0)) return aviso('Escribí un monto válido');
+    if (frec !== 'semanal' && !diaOk(d1)) return aviso('Escribí el día de cobro (1 a 31)');
+    if (frec === 'quincenal' && !(diaOk(d2) && d2 !== d1)) return aviso('Escribí el segundo día (distinto del primero)');
+    const id = f.dataset.id || D.nuevoId(), previo = E.recurrentes[id] || {};
+    const r = { ...previo, id, clase: ing ? 'ingreso' : 'gasto', nombre: f.nombre.value.trim(), monto: valor, moneda: f.moneda.value,
+      cat: ing ? null : f.cat.value, fuente: ing ? f.fuente.value : null, medio: f.medio.value, frecuencia: frec,
+      dias: frec === 'quincenal' ? [d1, d2].sort((a, b) => a - b) : [d1 || 1], diaSemana: +f.diaSemana.value, mes: +f.mes.value,
+      texto: f.texto.value.trim(), desde: previo.desde || D.hoy() };
+    dlg.close();
+    cambiar(() => { D.poner(E, 'recurrentes', r); D.generarPendientes(E); });
+    aviso(previo.id ? 'Cambios guardados' : ing ? 'Ingreso fijo guardado' : 'Gasto recurrente guardado');
   },
   meta: f => {
     const objetivo = D.parseMonto(f.objetivo.value);

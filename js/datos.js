@@ -22,7 +22,7 @@ export const borrarTodo = () => tx('readwrite', s => s.clear());
 
 // ---------- Modelo ----------
 export const COLECCIONES = ['movs', 'cats', 'presup', 'metas', 'abonos', 'deudas', 'pagos', 'tcManual', 'tcAuto', 'ajustes', 'alertasCerradas',
-  'revisados', 'reglas', 'llaves'];
+  'revisados', 'reglas', 'llaves', 'recurrentes'];
 export const CATS_BASE = [
   ['supermercados', 'Supermercados', 'carrito', '#165E83'],
   ['restaurantes', 'Restaurantes', 'plato', '#F4B3C2'],
@@ -73,6 +73,8 @@ export const ultimosMeses = (mes, n) => Array.from({ length: n }, (_, i) => suma
 export const diasEnMes = mes => new Date(+mes.slice(0, 4), +mes.slice(5, 7), 0).getDate();
 const utc = f => Date.UTC(+f.slice(0, 4), +f.slice(5, 7) - 1, +f.slice(8, 10));
 export const diasEntre = (a, b) => Math.round((utc(b) - utc(a)) / 864e5);
+export const sumarDias = (f, n) => new Date(utc(f) + n * 864e5).toISOString().slice(0, 10);
+export const diaSemana = f => new Date(utc(f)).getUTCDay(); // 0 = domingo
 const fMes = new Intl.DateTimeFormat('es-CR', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 const fMesCorto = new Intl.DateTimeFormat('es-CR', { month: 'short', timeZone: 'UTC' });
 const fDia = new Intl.DateTimeFormat('es-CR', { day: 'numeric', month: 'short', timeZone: 'UTC' });
@@ -193,10 +195,101 @@ export function totalDebo(e, tcHoy) {
   return lista(e, 'deudas').reduce((s, d) => s + saldoDeuda(e, d) * (d.moneda === 'USD' ? tcHoy : 1), 0);
 }
 
+// ---------- Gastos recurrentes e ingresos fijos ----------
+// {id, clase: 'gasto'|'ingreso', nombre, monto, moneda, cat, fuente, medio, frecuencia, dias: [d] o [d1, d2],
+//  diaSemana (semanal), mes (anual), texto (lo que aparece en el correo), desde}
+// Cada fecha que toca crea un movimiento con id fijo r-<id>-<fecha>: así dos dispositivos no lo duplican.
+export const FRECUENCIAS = { mensual: 'Mensual', quincenal: 'Quincenal', semanal: 'Semanal', anual: 'Anual' };
+export const DIAS_SEMANA = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+export const tipoRec = r => (r.clase === 'ingreso' ? 'ingreso' : 'gasto');
+export const claveRec = (r, f) => `r-${r.id}-${f}`;
+export function tocaEl(r, f) {
+  const d = +f.slice(8), fin = diasEnMes(mesDe(f)), enMes = x => Math.min(+x || 1, fin) === d; // el 31 cae el último día
+  if (r.frecuencia === 'semanal') return diaSemana(f) === +r.diaSemana;
+  if (r.frecuencia === 'anual') return +r.mes === +f.slice(5, 7) && enMes(r.dias[0]);
+  if (r.frecuencia === 'quincenal') return r.dias.some(enMes);
+  return enMes(r.dias[0]);
+}
+export function fechasRec(r, desde, hasta) {
+  const out = [];
+  for (let f = desde; f <= hasta; f = sumarDias(f, 1)) if (tocaEl(r, f)) out.push(f);
+  return out;
+}
+export const POR_MES = { mensual: 1, quincenal: 2, semanal: 52 / 12, anual: 1 / 12 };
+export const mensualRec = r => r.monto * (POR_MES[r.frecuencia] || 1);
+
+const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+// Calza: el comercio o la persona contiene el "texto en el correo", monto a 5 % o menos y fecha a 3 días o menos.
+export function calzaRec(r, m, f) {
+  return !!norm(r.texto) && m.tipo === tipoRec(r) && m.moneda === r.moneda && norm(`${m.quien} ${m.nota}`).includes(norm(r.texto))
+    && Math.abs(m.monto - r.monto) <= r.monto * 0.05 + 1e-9 && Math.abs(diasEntre(f, m.fecha)) <= 3;
+}
+// ¿Ya hay un movimiento confirmado para esa fecha del recurrente?
+const tomada = (e, clave, salvo) => {
+  const p = e.movs[clave];
+  return (p && !p.del && p.estado !== 'pendiente') || lista(e, 'movs').some(x => x.rec === clave && x.id !== clave && x.id !== salvo);
+};
+// La fecha de un recurrente que calza con un movimiento (del correo o anotado): {r, fecha, clave} o null.
+export function recurrenteDe(e, m) {
+  if (!m.fecha || !(m.monto > 0) || m.noReconocido) return null;
+  let mejor = null;
+  for (const r of lista(e, 'recurrentes'))
+    for (const f of fechasRec(r, sumarDias(m.fecha, -3), sumarDias(m.fecha, 3))) {
+      const clave = claveRec(r, f);
+      if (calzaRec(r, m, f) && !tomada(e, clave, m.id) && (!mejor || Math.abs(diasEntre(f, m.fecha)) < Math.abs(diasEntre(mejor.fecha, m.fecha))))
+        mejor = { r, fecha: f, clave };
+    }
+  return mejor;
+}
+// Crea los pendientes de las fechas que ya llegaron (hasta 2 meses atrás). Si ya hay un movimiento que calza
+// (el correo llegó antes), lo une con esa fecha y no crea nada. Devuelve cuántos pendientes creó.
+export function generarPendientes(e, h = hoy()) {
+  let n = 0;
+  const atras = sumarDias(h, -62);
+  for (const r of lista(e, 'recurrentes'))
+    for (const f of fechasRec(r, r.desde > atras ? r.desde : atras, h)) {
+      const clave = claveRec(r, f);
+      if (e.movs[clave] || lista(e, 'movs').some(x => x.rec === clave)) continue; // ya está (aunque lo hayas borrado)
+      const ya = lista(e, 'movs').find(x => !x.rec && x.estado !== 'pendiente' && calzaRec(r, x, f));
+      if (ya) { poner(e, 'movs', { ...ya, rec: clave }); continue; }
+      const ing = r.clase === 'ingreso';
+      poner(e, 'movs', { id: clave, tipo: tipoRec(r), monto: r.monto, moneda: r.moneda, fecha: f, medio: r.medio, quien: r.nombre, nota: '',
+        cat: ing ? null : r.cat, fuente: ing ? r.fuente : null, origen: 'recurrente', estado: 'pendiente', rec: clave, tc: tcDe(e, f) }).upd = 1;
+      n++; // upd = 1: si dos dispositivos lo crean es idéntico, y cualquier edición real (confirmar, borrar) le gana
+    }
+  return n;
+}
+export const confirmarMov = (e, m) => poner(e, 'movs', { ...m, estado: 'ok', tc: tcDe(e, m.fecha) });
+
+// Lo que pasa en cada día del mes: recurrentes, ingresos fijos y cuotas de deudas.
+// estado: 'listo' (pagado o recibido), 'pendiente' (sin confirmar), 'atrasado' (ya pasó y no hay nada) o 'proximo'.
+export function eventosMes(e, mes, h = hoy()) {
+  const out = {}, fin = `${mes}-${String(diasEnMes(mes)).padStart(2, '0')}`;
+  const add = (f, ev) => (out[f] ||= []).push(ev);
+  for (const r of lista(e, 'recurrentes'))
+    for (const f of fechasRec(r, r.desde > `${mes}-01` ? r.desde : `${mes}-01`, fin)) {
+      const clave = claveRec(r, f), p = e.movs[clave] && !e.movs[clave].del ? e.movs[clave] : lista(e, 'movs').find(x => x.rec === clave);
+      add(f, { tipo: tipoRec(r), nombre: r.nombre, monto: p?.monto ?? r.monto, moneda: r.moneda,
+        estado: p ? (p.estado === 'pendiente' ? 'pendiente' : 'listo') : f < h ? 'atrasado' : 'proximo' });
+    }
+  for (const d of lista(e, 'deudas')) {
+    if (mes < mesDe(d.inicio) || (saldoDeuda(e, d) <= 0 && !pagoEnMes(e, d.id, mes))) continue;
+    const f = fechaPagoDeuda(d, mes);
+    add(f, { tipo: 'deuda', nombre: d.acreedor, monto: Math.min(d.cuota, saldoDeuda(e, d)) || d.cuota, moneda: d.moneda,
+      estado: pagoEnMes(e, d.id, mes) ? 'listo' : f < h ? 'atrasado' : 'proximo' });
+  }
+  return out;
+}
+
 // (Disponible − lo que falta pagar este mes) ÷ días que quedan contando hoy
 export function presupuestoDiario(e, h = hoy()) {
   const mes = mesDe(h), r = resumenMes(e, mes), tc = tcDe(e, h) || 0;
   let falta = 0;
+  const fin = `${mes}-${String(diasEnMes(mes)).padStart(2, '0')}`;
+  for (const rc of lista(e, 'recurrentes')) // recurrentes que todavía no llegan este mes (los ingresos fijos no se cuentan)
+    if (rc.clase !== 'ingreso' && h < fin)
+      for (const f of fechasRec(rc, sumarDias(h, 1), fin))
+        if (!e.movs[claveRec(rc, f)] && !lista(e, 'movs').some(x => x.rec === claveRec(rc, f))) falta += rc.monto * (rc.moneda === 'USD' ? tc : 1);
   for (const d of lista(e, 'deudas')) {
     const saldo = saldoDeuda(e, d);
     if (saldo > 0 && !pagoEnMes(e, d.id, mes)) falta += Math.min(d.cuota || 0, saldo) * (d.moneda === 'USD' ? tc : 1);
@@ -231,6 +324,9 @@ export function alertas(e, h = hoy()) {
     if (s.atrasada)
       out.push({ clave: `meta|${m.id}|${mes}`, nivel: 'amarillo', texto: `Meta "${m.nombre}" va atrasada: deberías llevar ${monto(s.esperado, m.moneda)} y llevás ${monto(s.ahorrado, m.moneda)}` });
   }
+  for (const m of lista(e, 'movs'))
+    if (m.estado === 'pendiente' && m.rec && m.fecha < h)
+      out.push({ clave: `pend|${m.id}`, nivel: 'amarillo', texto: `${m.quien}: ${m.tipo === 'ingreso' ? 'el ingreso' : 'el pago'} del ${fechaCorta(m.fecha)} sigue pendiente de confirmar` });
   return out.filter(a => !e.alertasCerradas[a.clave] || e.alertasCerradas[a.clave].del);
 }
 
@@ -250,6 +346,8 @@ function sugerenciaBase(e, m) {
   return cats(e).find(c => c.nombre.toLowerCase() === n)?.id || 'otros';
 }
 export function sugerirCorreo(e, m) {
+  const rc = recurrenteDe(e, m); // si es un recurrente o ingreso fijo, va en su categoría
+  if (rc) { const v = m.tipo === 'ingreso' ? rc.r.fuente : rc.r.cat; if (m.tipo === 'ingreso' ? FUENTES[v] : e.cats[v] && !e.cats[v].del) return v; }
   const regla = m.quien ? e.reglas[claveRegla(m.tipo, m.quien)] : null;
   const valido = regla && !regla.del && (m.tipo === 'ingreso' ? FUENTES[regla.valor] : e.cats[regla.valor] && !e.cats[regla.valor].del);
   return valido ? regla.valor : sugerenciaBase(e, m);
@@ -260,20 +358,29 @@ export function aplicarRevision(e, m, { descartar, monto, valor }) {
   const accion = descartar || m.noReconocido ? 'descartado' : 'aceptado';
   for (const id of idsCorreo(m)) poner(e, 'revisados', { id, accion });
   if (accion === 'descartado') return null;
-  if (m.quien && valor !== sugerirCorreo(e, m)) poner(e, 'reglas', { id: claveRegla(m.tipo, m.quien), valor }); // aprende
+  const rc = recurrenteDe(e, m);
+  if (m.quien && !rc && valor !== sugerirCorreo(e, m)) poner(e, 'reglas', { id: claveRegla(m.tipo, m.quien), valor }); // aprende
   const ing = m.tipo === 'ingreso';
-  return poner(e, 'movs', {
+  const mov = {
     id: `c-${m.id}`, tipo: m.tipo, monto: monto > 0 ? monto : m.monto, moneda: m.moneda, fecha: m.fecha, medio: m.medio,
     quien: m.quien || '', nota: m.nota || '', cat: ing ? null : valor, fuente: ing ? valor : null,
     origen: m.origen === 'siri' ? 'siri' : 'correo', correoId: m.id, estado: 'ok', tc: tcDe(e, m.fecha),
-  });
+  };
+  if (rc) { // se une con el pendiente del recurrente (o queda marcado para que no se cree después)
+    mov.rec = rc.clave;
+    const p = e.movs[rc.clave];
+    if (p && !p.del) return poner(e, 'movs', { ...mov, id: p.id, quien: p.quien || mov.quien, nota: mov.nota || p.nota });
+  }
+  return poner(e, 'movs', mov);
 }
 
 // ¿Se puede anotar sin preguntar? Sí: ingresos (SINPE recibido), lo que vino de Siri, y gastos con regla aprendida
 // o categoría clara. No: lo dudoso (Uber sin recibo, recibo de Uber sin cobro del banco, categoría "otros")
 // ni lo que se parece a algo que ya anotaste a mano (mismo monto, ±1 día), para no duplicar.
 export function claroCorreo(e, m) {
-  if (m.noReconocido || m.confirmar || m.origen === 'uber' || !(m.monto > 0) || !m.fecha) return false;
+  if (m.noReconocido || !(m.monto > 0) || !m.fecha) return false;
+  if (recurrenteDe(e, m)) return true; // calza con un recurrente o ingreso fijo: se une con su pendiente
+  if (m.confirmar || m.origen === 'uber') return false;
   const repetido = lista(e, 'movs').some(x => x.origen !== 'correo' && x.origen !== 'siri' && x.tipo === m.tipo
     && x.moneda === m.moneda && Math.abs(x.monto - m.monto) < 0.5 && Math.abs(diasEntre(x.fecha, m.fecha)) <= 1);
   if (repetido) return false;

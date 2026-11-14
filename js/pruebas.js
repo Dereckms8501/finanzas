@@ -225,6 +225,59 @@ try {
   ok('correo: anotar solos no inventa reglas', !Object.keys(ea.reglas).length);
   ok('correo: con regla aprendida también se anota solo',
     (D.poner(ea, 'reglas', { id: D.claveRegla('gasto', 'TIENDA X'), valor: 'gym' }), D.anotarClaros(ea, claros) === 1 && ea.movs['c-a2'].cat === 'gym'));
+  // ---- Recurrentes e ingresos fijos ----
+  const fr = (frecuencia, x) => ({ frecuencia, dias: [1], ...x });
+  ok('recurrente: el día 31 cae el último día de febrero', D.fechasRec(fr('mensual', { dias: [31] }), '2027-02-01', '2027-02-28').join() === '2027-02-28');
+  ok('recurrente: quincenal 15 y 30 en febrero', D.fechasRec(fr('quincenal', { dias: [15, 30] }), '2027-02-01', '2027-02-28').join() === '2027-02-15,2027-02-28');
+  ok('recurrente: semanal los lunes', D.fechasRec(fr('semanal', { diaSemana: 1 }), '2026-11-01', '2026-11-30').length === 5);
+  ok('recurrente: anual solo en su mes', D.fechasRec(fr('anual', { dias: [10], mes: 3 }), '2026-01-01', '2026-12-31').join() === '2026-03-10');
+
+  const er = D.estadoNuevo('Rec', 500);
+  const spot = D.poner(er, 'recurrentes', { id: 'spot', clase: 'gasto', nombre: 'Spotify', monto: 2500, moneda: 'CRC', cat: 'otros', medio: 'Tarjeta',
+    frecuencia: 'mensual', dias: [10], texto: 'spotify', desde: '2026-11-01' });
+  D.poner(er, 'recurrentes', { id: 'beca', clase: 'ingreso', nombre: 'Beca', monto: 60000, moneda: 'CRC', fuente: 'beca', medio: 'SINPE',
+    frecuencia: 'mensual', dias: [5], texto: 'Universidad Prueba', desde: '2026-11-01' });
+  D.poner(er, 'recurrentes', { id: 'cel', clase: 'gasto', nombre: 'Plan celular', monto: 9000, moneda: 'CRC', cat: 'otros', medio: 'Tarjeta',
+    frecuencia: 'mensual', dias: [25], texto: '', desde: '2026-11-01' });
+  D.poner(er, 'movs', { id: 'i1', tipo: 'ingreso', monto: 100000, moneda: 'CRC', fecha: '2026-11-01', medio: 'SINPE', fuente: 'otro', estado: 'ok' });
+  const antesPD = D.presupuestoDiario(er, '2026-11-08');
+  ok('presupuesto diario resta los recurrentes que faltan (Spotify y celular, no la beca)', antesPD.falta === 11500, `(${antesPD.falta})`);
+  ok('crea los pendientes cuando llega la fecha (beca del 5)', D.generarPendientes(er, '2026-11-08') === 1 && er.movs['r-beca-2026-11-05']?.estado === 'pendiente');
+  ok('un pendiente no cuenta como ingreso ni gasto', D.resumenMes(er, '2026-11').ingresos === 100000);
+  ok('alerta: pendiente que pasó su fecha', D.alertas(er, '2026-11-08').some(a => a.clave === 'pend|r-beca-2026-11-05'));
+
+  // El SINPE de la beca llega por correo 2 días después y con otro monto (menos de 5 %): se une con el pendiente
+  const sBeca = { id: 'g1', origen: 'bac-sinpe', tipo: 'ingreso', medio: 'SINPE', monto: 58000, moneda: 'CRC', fecha: '2026-11-07', quien: 'UNIVERSIDAD PRUEBA', fuente: 'otro' };
+  ok('ingreso fijo: el SINPE del correo se reconoce', D.recurrenteDe(er, sBeca)?.clave === 'r-beca-2026-11-05' && D.claroCorreo(er, sBeca));
+  D.anotarClaros(er, [sBeca]);
+  const beca = er.movs['r-beca-2026-11-05'];
+  ok('ingreso fijo: se une con el pendiente, sin duplicar', beca.estado === 'ok' && beca.monto === 58000 && beca.correoId === 'g1' && beca.fuente === 'beca'
+    && !er.movs['c-g1'] && D.resumenMes(er, '2026-11').ingresos === 158000);
+
+  // El cobro de Spotify llega ANTES de la fecha (día 9): al llegar el 10 no se crea otro
+  const cSpot = { id: 'g2', origen: 'bac', tipo: 'gasto', medio: 'Tarjeta', monto: 2550, moneda: 'CRC', fecha: '2026-11-09', quien: 'SPOTIFY P3A1', cat: 'otros' };
+  D.anotarClaros(er, [cSpot]);
+  ok('recurrente: el cobro que llega antes queda unido a su fecha', er.movs['c-g2']?.rec === 'r-spot-2026-11-10');
+  D.generarPendientes(er, '2026-11-12');
+  ok('recurrente: al llegar la fecha no se duplica', !er.movs['r-spot-2026-11-10'] && D.resumenMes(er, '2026-11').gastado === 2550);
+  ok('recurrente: un cobro con más de 5 % de diferencia no se une', !D.recurrenteDe(er, { ...cSpot, id: 'g3', monto: 2700, fecha: '2026-12-10' }));
+  ok('recurrente: sin "texto en el correo" no se une con nada', !D.recurrenteDe(er, { ...cSpot, id: 'g4', quien: 'PLAN CELULAR', monto: 9000, fecha: '2026-11-25' }));
+
+  // Gasto anotado a mano antes de que llegue la fecha: se une en vez de crear otro
+  D.poner(er, 'movs', { id: 'm9', tipo: 'gasto', monto: 2500, moneda: 'CRC', fecha: '2026-12-11', medio: 'Tarjeta', quien: 'Spotify', cat: 'otros', estado: 'ok' });
+  D.generarPendientes(er, '2026-12-11');
+  ok('recurrente: si ya lo anotaste a mano, no crea el pendiente', er.movs.m9.rec === 'r-spot-2026-12-10' && !er.movs['r-spot-2026-12-10']);
+  const nCel = D.generarPendientes(er, '2026-12-11');
+  ok('recurrente: correr de nuevo no duplica nada', nCel === 0);
+  D.quitar(er, 'movs', 'r-cel-2026-11-25');
+  ok('recurrente: si borrás un pendiente no vuelve a aparecer', D.generarPendientes(er, '2026-12-11') === 0);
+  ok('recurrente: confirmar a mano', D.confirmarMov(er, er.movs['r-beca-2026-12-05']).estado === 'ok');
+  ok('recurrente: el pendiente generado pierde contra cualquier edición (sincronización)', er.movs['r-cel-2026-12-25'] === undefined
+    && D.combinar(er, { ...er, movs: { ...er.movs, 'r-beca-2026-12-05': { ...er.movs['r-beca-2026-12-05'], estado: 'pendiente', upd: 1 } } }).movs['r-beca-2026-12-05'].estado === 'ok');
+  const evs = D.eventosMes(er, '2026-11', '2026-11-12');
+  ok('calendario: estados del mes', evs['2026-11-05'][0].estado === 'listo' && evs['2026-11-10'][0].estado === 'listo' && evs['2026-11-25'][0].estado === 'proximo');
+  ok('total mensual: quincenal cuenta doble', D.mensualRec({ monto: 1000, frecuencia: 'quincenal' }) === 2000);
+
   const nuevas = D.agregarTcAuto(ec, { '2026-11-12': { compra: 440, venta: 450 }, '2026-11-13': { compra: 0, venta: 451 } });
   ok('tipo de cambio automático: solo fechas válidas', nuevas.join() === '2026-11-12' && D.tcDe(ec, '2026-11-12') === 450);
   ok('tipo de cambio: el manual le gana al automático', (D.poner(ec, 'tcManual', { id: '2026-11-12', valor: 455 }), D.tcDe(ec, '2026-11-12') === 455));

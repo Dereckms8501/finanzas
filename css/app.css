@@ -173,7 +173,32 @@ label.check input { width: 20px; min-height: 20px; }
 }
 .seg .activa, .seg label:has(input:checked) { background: var(--suave); color: var(--principal); }
 .seg input, .iconos-sel input { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; min-height: 0; padding: 0; }
-.pestañas { margin-bottom: 16px; }
+.pestañas { margin-bottom: 16px; display: flex; width: fit-content; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.pestañas button { flex: none; white-space: nowrap; }
+@media (max-width: 560px) { .pestañas button { padding: 6px 10px; } }
+
+/* Recurrentes y calendario */
+.form-rec:has([name=frecuencia] option[value=semanal]:checked) .f-dias,
+.form-rec:not(:has([name=frecuencia] option[value=semanal]:checked)) .f-sem,
+.form-rec:not(:has([name=frecuencia] option[value=quincenal]:checked)) .f-dia2,
+.form-rec:not(:has([name=frecuencia] option[value=anual]:checked)) .f-mes { display: none; }
+.mov.pend { opacity: .75; }
+.mov.pend .m { color: var(--texto2); }
+.chip.pend { border-color: var(--aviso); color: var(--aviso-texto); }
+.ico-btn.confirmar { color: var(--sobre-principal); background: var(--principal); border-radius: 50%; }
+.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; }
+.cal .et { font-size: 12px; color: var(--texto2); padding-bottom: 4px; }
+.cal .dia { display: grid; justify-items: center; gap: 2px; padding: 6px 0; min-height: 48px; border: 1px solid transparent; border-radius: 8px;
+  background: none; color: var(--texto); font: inherit; font-size: 14px; cursor: pointer; }
+.cal .dia.hoy span { color: var(--principal); font-weight: 600; }
+.cal .dia.sel { border-color: var(--principal); background: var(--suave); }
+.cal .dia i { display: flex; gap: 3px; height: 6px; }
+.cal .dia b, .punto-ev { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
+.punto-ev { width: 10px; height: 10px; }
+.p-gasto { background: var(--acento-texto); }
+.p-ingreso { background: var(--exito); }
+.p-deuda { background: var(--aviso); }
+.fila-ley { flex-wrap: wrap; }
 
 .barra { height: 6px; background: var(--borde); border-radius: 3px; overflow: hidden; margin: 6px 0; }
 .barra i { display: block; height: 100%; border-radius: 3px; background: var(--exito); }
