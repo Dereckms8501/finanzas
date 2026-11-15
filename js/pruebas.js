@@ -62,22 +62,22 @@ igual('gasto en dólares convertido con su TC', r.porCat.supermercados, 5000);
 igual('abonos del mes', r.abonos, 5000);
 igual('pagos del mes', r.pagos, 3000);
 igual('lo que sobró o faltó del mes pasado', r.arrastre, -99999);
-igual('disponible (incluye lo del mes pasado)', r.disponible, 120000 - 28500 - 5000 - 3000 - 99999);
+igual('disponible solo del mes (lo anterior va aparte)', r.disponible, 120000 - 28500 - 5000 - 3000);
 igual('SINPE enviados', r.sinpeEnv, 3500);
 igual('SINPE recibidos', r.sinpeRec, 20000);
 igual('total ahorrado', D.totalAhorrado(e), 5000);
 igual('total que debo', D.totalDebo(e, 510), 27000);
 
 // Presupuesto diario el 2026-11-13. La deuda d1 ya tiene un pago este mes, así que no se resta su cuota.
-igual('presupuesto diario (deuda ya pagada este mes)', D.presupuestoDiario(e, '2026-11-13').porDia, (83500 - 99999 - 15000) / 18);
+igual('presupuesto diario (deuda ya pagada este mes)', D.presupuestoDiario(e, '2026-11-13').porDia, (83500 - 15000) / 18);
 // Deuda sin pago este mes: su cuota sí se resta y avisa 2 días antes
 D.poner(e, 'deudas', { id: 'd2', acreedor: 'Banco', total: 50000, moneda: 'CRC', cuota: 10000, dia: 15, tasa: 0, inicio: '2026-10-01' });
-igual('presupuesto diario (resta cuota pendiente)', D.presupuestoDiario(e, '2026-11-13').porDia, (83500 - 99999 - 15000 - 10000) / 18);
+igual('presupuesto diario (resta cuota pendiente)', D.presupuestoDiario(e, '2026-11-13').porDia, (83500 - 15000 - 10000) / 18);
 D.poner(e, 'deudas', { id: 'd3', acreedor: 'Futura', total: 50000, moneda: 'CRC', cuota: 7000, dia: 14, tasa: 0, inicio: '2027-01-01' });
-igual('deuda que empieza en otro mes no se resta', D.presupuestoDiario(e, '2026-11-13').porDia, (83500 - 99999 - 15000 - 10000) / 18);
+igual('deuda que empieza en otro mes no se resta', D.presupuestoDiario(e, '2026-11-13').porDia, (83500 - 15000 - 10000) / 18);
 ok('deuda que empieza en otro mes no avisa', !D.alertas(e, '2026-11-13').some(a => a.clave.startsWith('deuda|d3')));
 D.quitar(e, 'deudas', 'd3');
-ok('alerta cuando el disponible queda en negativo', D.alertas(e, '2026-11-13').some(a => a.clave === 'sobre|2026-11'));
+ok('lo de meses anteriores no dispara la alerta del mes', !D.alertas(e, '2026-11-13').some(a => a.clave === 'sobre|2026-11'));
 
 // Límites y alertas
 D.ponerLimite(e, '2026-10', 'restaurantes', 25000);

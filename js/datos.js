@@ -171,9 +171,8 @@ export function resumenMes(e, mes) {
     porOtros: suma(lista(e, 'compartidas').filter(c => c.clase === 'cargo' && c.sentido === 'meDeben' && c.fecha.startsWith(mes))),
     reembolsos: suma(movs.filter(m => m.tipo === 'ingreso' && m.reembolso)),
   };
-  r.delMes = r.ingresos - r.gastado - r.abonos - r.pagos - (r.porOtros - r.reembolsos);
-  r.arrastre = saldoAntes(e, mes);
-  r.disponible = r.delMes + r.arrastre;
+  r.disponible = r.ingresos - r.gastado - r.abonos - r.pagos - (r.porOtros - r.reembolsos); // solo este mes
+  r.arrastre = saldoAntes(e, mes); // lo de meses anteriores: se muestra aparte, no se suma
   return r;
 }
 

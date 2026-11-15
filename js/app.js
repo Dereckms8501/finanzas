@@ -406,7 +406,7 @@ function vInicio() {
     <p class="hero-et">Disponible en ${nombreMesMin(mes)}</p>
     <p class="hero-num ${r.disponible < 0 ? 'neg' : ''}">${crc(r.disponible)}</p>
     <p class="hero-usd">${dolares(r.disponible)}</p>
-    ${Math.round(r.arrastre) ? `<p class="hero-sub">${r.arrastre > 0 ? `Incluye ${crc(r.arrastre)} que te sobró` : `Ya resta ${crc(-r.arrastre)} que te faltó`} de meses anteriores</p>` : ''}
+    ${Math.round(r.arrastre) ? `<p class="hero-sub">Aparte, de meses anteriores ${r.arrastre > 0 ? `te sobró <b>${crc(r.arrastre)}</b>` : `te faltó <b>${crc(-r.arrastre)}</b>`}</p>` : ''}
   </section>
   ${vAlertas(alertasVisibles())}
   <div class="tarjeta lista-datos">
@@ -494,8 +494,8 @@ function vPresup() {
   <div class="tarjeta"><h2>Resumen</h2><dl class="resumen">
     <div><dt>Ingresos</dt><dd>${crc(r.ingresos)}</dd></div><div><dt>Gastado</dt><dd>${crc(r.gastado)}</dd></div>
     <div><dt>Abonos a metas</dt><dd>${crc(r.abonos)}</dd></div><div><dt>Pagos de deudas</dt><dd>${crc(r.pagos)}</dd></div>
-    ${Math.round(r.arrastre) ? `<div><dt>${r.arrastre > 0 ? 'Sobró' : 'Faltó'} de meses anteriores</dt><dd class="${r.arrastre < 0 ? 'txt-rojo' : ''}">${crc(r.arrastre)}</dd></div>` : ''}
-    <div class="total"><dt>Disponible</dt><dd class="${r.disponible < 0 ? 'txt-rojo' : ''}">${crc(r.disponible)}${dolares(r.disponible) ? ` <span class="sec">(${dolares(r.disponible)})</span>` : ''}</dd></div></dl></div>
+    <div class="total"><dt>Disponible</dt><dd class="${r.disponible < 0 ? 'txt-rojo' : ''}">${crc(r.disponible)}${dolares(r.disponible) ? ` <span class="sec">(${dolares(r.disponible)})</span>` : ''}</dd></div>
+    ${Math.round(r.arrastre) ? `<div><dt>Aparte: ${r.arrastre > 0 ? 'te sobró' : 'te faltó'} de meses anteriores</dt><dd class="${r.arrastre < 0 ? 'txt-rojo' : ''}">${crc(Math.abs(r.arrastre))}</dd></div>` : ''}</dl></div>
   <div class="tarjeta"><h2>Comparado con ${D.nombreMes(D.mesAnterior(ui.mes)).toLowerCase()}</h2>
     ${comp ? `<table class="tabla"><thead><tr><th>Categoría</th><th>Este mes</th><th>Anterior</th><th>Diferencia</th></tr></thead><tbody>${comp}</tbody></table>` : '<p class="vacio">Sin gastos para comparar.</p>'}</div>
   <div class="tarjeta"><h2>Cierres de mes</h2>${cierres.length ? cierres.map(c => {
@@ -1313,10 +1313,6 @@ const FORM = {
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-a]');
   if (b && !b.disabled) { e.preventDefault(); ACC[b.dataset.a]?.(b.dataset.v, b); }
-});
-// las filas que se tocan para editar también abren con Enter o espacio desde el teclado
-document.addEventListener('keydown', e => {
-  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[role=button][data-a]')) { e.preventDefault(); e.target.click(); }
 });
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 document.addEventListener('submit', e => {

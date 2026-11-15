@@ -24,7 +24,7 @@ Los datos viven cifrados: en el aparato (IndexedDB) y en el repositorio privado 
 - Botones: `data-a="nombre" data-v="valor"` llaman a `ACC.nombre(v, boton)`. Formularios: `data-f="nombre"` llaman a `FORM.nombre(form)`. `cambiar(fn)` = aplicar, guardar cifrado y volver a pintar.
 - Todo texto del usuario o de un correo pasa por `esc()` (en `datos.js`) antes de entrar al HTML.
 - Montos: `D.parseMonto` lee "1.500", "1,500", "1 250,75"; `crc()`/`usd()` los muestran. Dólares a colones con `D.aCRC(x)` (usa `x.tc`).
-- Disponible del mes: `resumenMes` en `datos.js` = lo del mes + `saldoAntes` (lo que sobró o faltó de meses anteriores).
+- Disponible del mes: `resumenMes` en `datos.js`, solo con lo del mes. Lo de meses anteriores (`saldoAntes`, en `r.arrastre`) se muestra aparte y no se suma.
 - Anotar un gasto: el botón + llama `ACC.nuevo`, que abre `formMov()`; al guardar corre `FORM.mov` → `movDeForm()`.
 - Correos: la revisión la decide `razonRevision` en `datos.js`; la pantalla es `vCorreo` en `app.js`.
 
@@ -37,6 +37,7 @@ Los datos viven cifrados: en el aparato (IndexedDB) y en el repositorio privado 
 
 ## Publicar
 
+- Antes de publicar: `for f in js/*.js; do node --check --input-type=module < "$f" || echo "FALLA: $f"; done` (las pruebas no cargan `app.js`: un error ahí deja la app en blanco y las pruebas igual pasan).
 - Subir `VERSION` en `sw.js` en cada publicación (si no, los teléfonos siguen con la versión vieja).
 - Si cambió algo del correo, correr también `python scripts/prueba_importar.py` en `finanzas-datos`.
 - Commit y push a `main`; GitHub Pages publica solo. Verificar que el `sw.js` en vivo tenga la versión nueva.
