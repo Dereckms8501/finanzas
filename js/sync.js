@@ -19,10 +19,10 @@ async function pedir(cfg, ruta, opciones = {}) {
   let r;
   try {
     r = await fetch(`${API}/repos/${cfg.repo}${ruta}`, {
-      cache: 'no-store', ...opciones,
+      cache: 'no-store', signal: AbortSignal.timeout(15000), ...opciones, // con mala señal no se queda esperando para siempre
       headers: { Authorization: `Bearer ${cfg.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...opciones.headers },
     });
-  } catch { throw new ErrorSync('red', 'Sin conexión a internet.'); }
+  } catch { throw new ErrorSync('red', 'Sin conexión a internet (o GitHub no respondió).'); }
   if (r.status === 401) throw new ErrorSync('token', 'El token no es válido o ya venció.');
   if (r.status === 403) throw new ErrorSync('permiso', 'El token no tiene permiso para escribir en el repositorio (Contents: lectura y escritura).');
   return r;
@@ -94,7 +94,7 @@ export async function sincronizar(cfg, mk, e, llave) {
     if (remoto) {
       let datos;
       try { datos = await C.descifrar(mk, remoto.sobre.datos); }
-      catch { throw new ErrorSync('llave', 'Los datos en GitHub se cifraron con otra llave (vienen de otra instalación que empezó de cero). No los toqué.'); }
+      catch { throw new ErrorSync('llave', 'Los datos en GitHub tienen otra llave: si cambiaste la contraseña en otro aparato, aquí tenés que borrar los datos (Ajustes) y entrar con "Ya tengo datos en otro dispositivo". No los toqué.'); }
       unido = combinar(e, datos);
       llaveFinal = masNueva(llave, remoto.sobre.llave);
       igual = huella(unido) === huella(datos) && mismaLlave(llaveFinal, remoto.sobre.llave);
@@ -103,6 +103,23 @@ export async function sincronizar(cfg, mk, e, llave) {
     const sobre = { v: 1, llave: llaveFinal, datos: await C.cifrar(mk, unido) };
     if (await subir(cfg, sobre, remoto?.sha)) return { e: unido, llave: llaveFinal };
     e = unido; llave = llaveFinal;
+  }
+  throw new ErrorSync('conflicto', 'Otro dispositivo estaba guardando al mismo tiempo. Probá de nuevo en un momento.');
+}
+
+// Cambio de contraseña con llave nueva: combina lo de GitHub (cifrado con la llave vieja) y lo sube cifrado con la nueva.
+export async function cambiarLlave(cfg, mkViejo, mkNuevo, e, llaveNueva) {
+  for (let intento = 0; intento < 4; intento++) {
+    const remoto = await bajar(cfg);
+    let unido = e;
+    if (remoto) {
+      let datos = null;
+      for (const k of [mkViejo, mkNuevo]) { try { datos = await C.descifrar(k, remoto.sobre.datos); break; } catch { /* probar la otra */ } }
+      if (!datos) throw new ErrorSync('llave', 'Los datos en GitHub tienen una llave que no conozco. No los toqué.');
+      unido = combinar(e, datos);
+    }
+    if (await subir(cfg, { v: 1, llave: llaveNueva, datos: await C.cifrar(mkNuevo, unido) }, remoto?.sha)) return { e: unido };
+    e = unido;
   }
   throw new ErrorSync('conflicto', 'Otro dispositivo estaba guardando al mismo tiempo. Probá de nuevo en un momento.');
 }

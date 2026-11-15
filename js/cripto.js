@@ -1,5 +1,5 @@
 // Llaves y cifrado. La llave maestra (AES-256-GCM) cifra todos los datos.
-// Se guarda "envuelta" con la contraseña (PBKDF2) y, si se activa, con Face ID (WebAuthn PRF).
+// Se guarda "envuelta" con la contraseña (PBKDF2). Al cambiar la contraseña se crea una llave nueva y se vuelve a cifrar todo.
 const enc = new TextEncoder(), dec = new TextDecoder();
 export const ITER = 600000;
 
@@ -27,7 +27,7 @@ async function claveDeContrasena(pass, sal, iter) {
   return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: sal, iterations: iter }, base, AES, false, ['wrapKey', 'unwrapKey']);
 }
 
-// Cambiar la contraseña = volver a llamar esto con la misma llave maestra. Los datos no se tocan.
+// Envuelve la llave maestra con la contraseña.
 export async function envolverConContrasena(mk, pass) {
   const sal = azar(16);
   // upd: al sincronizar, el otro dispositivo adopta la contraseña más reciente
@@ -46,40 +46,6 @@ export async function cifrar(mk, obj) {
 export async function descifrar(mk, c) {
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: deb64(c.iv) }, mk, deb64(c.ct));
   return JSON.parse(dec.decode(pt));
-}
-
-// ---- Face ID / Touch ID con la extensión PRF de WebAuthn ----
-async function claveDePRF(salida) {
-  const base = await crypto.subtle.importKey('raw', salida, 'HKDF', false, ['deriveKey']);
-  return crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: enc.encode('finanzas-faceid') },
-    base, AES, false, ['wrapKey', 'unwrapKey']);
-}
-async function pedirPRF(credId, salPRF) {
-  const r = await navigator.credentials.get({ publicKey: {
-    challenge: azar(32), rpId: location.hostname, userVerification: 'required',
-    allowCredentials: [{ type: 'public-key', id: credId }],
-    extensions: { prf: { eval: { first: salPRF } } } } });
-  const out = r.getClientExtensionResults().prf?.results?.first;
-  if (!out) throw new Error('sin-prf');
-  return out;
-}
-export async function activarFaceID(mk, nombre) {
-  if (!window.PublicKeyCredential) throw new Error('sin-prf');
-  const salPRF = azar(32);
-  const cred = await navigator.credentials.create({ publicKey: {
-    rp: { name: 'Finanzas', id: location.hostname },
-    user: { id: azar(16), name: 'finanzas', displayName: nombre || 'Finanzas' },
-    challenge: azar(32),
-    pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-    authenticatorSelection: { authenticatorAttachment: 'platform', residentKey: 'preferred', userVerification: 'required' },
-    extensions: { prf: {} } } });
-  if (cred.getClientExtensionResults().prf?.enabled === false) throw new Error('sin-prf');
-  const credId = new Uint8Array(cred.rawId);
-  const salida = await pedirPRF(credId, salPRF); // si no hay PRF real, falla aquí y no se guarda nada
-  return { credId: b64(credId), sal: b64(salPRF), ...(await envolver(mk, await claveDePRF(salida))) };
-}
-export async function abrirConFaceID(w) {
-  return desenvolver(w, await claveDePRF(await pedirPRF(deb64(w.credId), deb64(w.sal))));
 }
 
 // ---- Llaves para los correos (cifrado híbrido RSA-OAEP 4096 + AES-256-GCM) ----

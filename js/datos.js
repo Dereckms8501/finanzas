@@ -60,6 +60,18 @@ export function combinar(a, b) {
   return r;
 }
 
+// Deja todo exactamente como en el respaldo, para deshacer un borrado: lo de después se borra y lo del respaldo vuelve
+// con fecha de edición nueva (así gana al sincronizar). Las llaves del correo no se tocan: el Action usa la actual.
+export function restaurarExacto(e, r) {
+  for (const c of COLECCIONES) {
+    if (c === 'llaves') continue;
+    const viejo = r[c] || {};
+    for (const [id, it] of Object.entries(e[c] || {})) if (!it.del && (!viejo[id] || viejo[id].del)) quitar(e, c, id);
+    for (const it of Object.values(viejo)) if (!it.del) poner(e, c, { ...it });
+  }
+  return e;
+}
+
 // ---------- Fechas ----------
 export function hoy() { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
 export const mesDe = f => f.slice(0, 7);
@@ -97,8 +109,10 @@ export const tcFmt = n => '₡' + nUSD.format(n); // el tipo de cambio sí lleva
 export const numPlano = (n, moneda) => (moneda === 'USD' ? nUSD : nCRC).format(n);
 export function parseMonto(s) {
   let t = String(s ?? '').replace(/[\s  ₡$]/g, '');
-  if (t.includes(',') && t.includes('.')) t = t.replace(/\./g, '');
-  t = t.replace(',', '.');
+  // misma regla que numero() del lector de correos: el último separador es el decimal; "1.500" o "1,500" son miles
+  if (t.includes(',') && t.includes('.')) { const d = Math.max(t.lastIndexOf(','), t.lastIndexOf('.')); t = t.slice(0, d).replace(/[.,]/g, '') + '.' + t.slice(d + 1); }
+  else if (/^\d{1,3}([.,]\d{3})+$/.test(t)) t = t.replace(/[.,]/g, '');
+  else t = t.replace(',', '.');
   const n = Number(t);
   return Number.isFinite(n) ? n : NaN;
 }
@@ -119,10 +133,22 @@ export function tcInfo(e, fecha) {
 }
 export const tcDe = (e, fecha) => tcInfo(e, fecha)?.valor || null;
 export const aCRC = x => (x.moneda === 'USD' ? x.monto * (x.tc || 0) : x.monto);
+const enCRC = (monto, moneda, tc) => monto * (moneda === 'USD' ? tc : 1);
 
 // ---------- Cálculos del mes ----------
 const suma = (arr, f = aCRC) => arr.reduce((s, x) => s + f(x), 0);
 export const movsMes = (e, mes) => lista(e, 'movs').filter(m => m.fecha.startsWith(mes));
+
+// Lo que sobró (o faltó) de todos los meses antes de "mes": la misma cuenta del disponible, sumada hasta el mes anterior.
+export function saldoAntes(e, mes) {
+  const ini = `${mes}-01`;
+  let s = 0;
+  for (const m of lista(e, 'movs'))
+    if (m.fecha < ini && m.estado !== 'pendiente') s += m.tipo === 'ingreso' ? aCRC(m) : m.reembolso ? 0 : -aCRC(m);
+  for (const col of ['abonos', 'pagos']) for (const x of lista(e, col)) if (x.fecha < ini) s -= aCRC(x);
+  for (const c of lista(e, 'compartidas')) if (c.clase === 'cargo' && c.sentido === 'meDeben' && c.fecha < ini) s -= aCRC(c);
+  return s;
+}
 
 export function resumenMes(e, mes) {
   const movs = movsMes(e, mes).filter(m => m.estado !== 'pendiente');
@@ -143,7 +169,9 @@ export function resumenMes(e, mes) {
     porOtros: suma(lista(e, 'compartidas').filter(c => c.clase === 'cargo' && c.sentido === 'meDeben' && c.fecha.startsWith(mes))),
     reembolsos: suma(movs.filter(m => m.tipo === 'ingreso' && m.reembolso)),
   };
-  r.disponible = r.ingresos - r.gastado - r.abonos - r.pagos - (r.porOtros - r.reembolsos);
+  r.delMes = r.ingresos - r.gastado - r.abonos - r.pagos - (r.porOtros - r.reembolsos);
+  r.arrastre = saldoAntes(e, mes);
+  r.disponible = r.delMes + r.arrastre;
   return r;
 }
 
@@ -193,9 +221,9 @@ export function fechaPagoDeuda(d, mes) {
 }
 
 // ---------- Inicio ----------
-export function totalAhorrado(e) { return suma(lista(e, 'abonos')); }
+export function totalAhorrado(e) { return suma(lista(e, 'abonos').filter(a => e.metas[a.metaId] && !e.metas[a.metaId].del)); }
 export function totalDebo(e, tcHoy) {
-  return lista(e, 'deudas').reduce((s, d) => s + saldoDeuda(e, d) * (d.moneda === 'USD' ? tcHoy : 1), 0);
+  return lista(e, 'deudas').reduce((s, d) => s + enCRC(saldoDeuda(e, d), d.moneda, tcHoy), 0);
 }
 
 // ---------- Gastos recurrentes e ingresos fijos ----------
@@ -227,19 +255,25 @@ export function calzaRec(r, m, f) {
   return !!norm(r.texto) && m.tipo === tipoRec(r) && m.moneda === r.moneda && norm(`${m.quien} ${m.nota}`).includes(norm(r.texto))
     && Math.abs(m.monto - r.monto) <= r.monto * 0.05 + 1e-9 && Math.abs(diasEntre(f, m.fecha)) <= 3;
 }
+// rec → movimientos unidos a esa fecha de recurrente
+function indiceRec(e) {
+  const ix = new Map();
+  for (const x of lista(e, 'movs')) if (x.rec) (ix.get(x.rec) || ix.set(x.rec, []).get(x.rec)).push(x);
+  return ix;
+}
 // ¿Ya hay un movimiento confirmado para esa fecha del recurrente?
-const tomada = (e, clave, salvo) => {
+const tomada = (e, ix, clave, salvo) => {
   const p = e.movs[clave];
-  return (p && !p.del && p.estado !== 'pendiente') || lista(e, 'movs').some(x => x.rec === clave && x.id !== clave && x.id !== salvo);
+  return (p && !p.del && p.estado !== 'pendiente') || (ix.get(clave) || []).some(x => x.id !== clave && x.id !== salvo);
 };
 // La fecha de un recurrente que calza con un movimiento (del correo o anotado): {r, fecha, clave} o null.
 export function recurrenteDe(e, m) {
   if (!m.fecha || !(m.monto > 0) || m.noReconocido) return null;
-  let mejor = null;
+  let mejor = null, ix = null;
   for (const r of lista(e, 'recurrentes'))
     for (const f of fechasRec(r, sumarDias(m.fecha, -3), sumarDias(m.fecha, 3))) {
       const clave = claveRec(r, f);
-      if (calzaRec(r, m, f) && !tomada(e, clave, m.id) && (!mejor || Math.abs(diasEntre(f, m.fecha)) < Math.abs(diasEntre(mejor.fecha, m.fecha))))
+      if (calzaRec(r, m, f) && !tomada(e, ix ??= indiceRec(e), clave, m.id) && (!mejor || Math.abs(diasEntre(f, m.fecha)) < Math.abs(diasEntre(mejor.fecha, m.fecha))))
         mejor = { r, fecha: f, clave };
     }
   return mejor;
@@ -248,13 +282,14 @@ export function recurrenteDe(e, m) {
 // (el correo llegó antes), lo une con esa fecha y no crea nada. Devuelve cuántos pendientes creó.
 export function generarPendientes(e, h = hoy()) {
   let n = 0;
-  const atras = sumarDias(h, -62);
+  const atras = sumarDias(h, -62), ix = indiceRec(e);
+  const libres = lista(e, 'movs').filter(x => !x.rec && x.estado !== 'pendiente');
   for (const r of lista(e, 'recurrentes'))
     for (const f of fechasRec(r, r.desde > atras ? r.desde : atras, h)) {
       const clave = claveRec(r, f);
-      if (e.movs[clave] || lista(e, 'movs').some(x => x.rec === clave)) continue; // ya está (aunque lo hayas borrado)
-      const ya = lista(e, 'movs').find(x => !x.rec && x.estado !== 'pendiente' && calzaRec(r, x, f));
-      if (ya) { poner(e, 'movs', { ...ya, rec: clave }); continue; }
+      if (e.movs[clave] || ix.has(clave)) continue; // ya está (aunque lo hayas borrado)
+      const i = libres.findIndex(x => calzaRec(r, x, f));
+      if (i >= 0) { poner(e, 'movs', { ...libres[i], rec: clave }); libres.splice(i, 1); ix.set(clave, []); continue; }
       const ing = r.clase === 'ingreso';
       poner(e, 'movs', { id: clave, tipo: tipoRec(r), monto: r.monto, moneda: r.moneda, fecha: f, medio: r.medio, quien: r.nombre, nota: '',
         cat: ing ? null : r.cat, fuente: ing ? r.fuente : null, origen: 'recurrente', estado: 'pendiente', rec: clave, tc: tcDe(e, f) }).upd = 1;
@@ -268,10 +303,10 @@ export const confirmarMov = (e, m) => poner(e, 'movs', { ...m, estado: 'ok', tc:
 // estado: 'listo' (pagado o recibido), 'pendiente' (sin confirmar), 'atrasado' (ya pasó y no hay nada) o 'proximo'.
 export function eventosMes(e, mes, h = hoy()) {
   const out = {}, fin = `${mes}-${String(diasEnMes(mes)).padStart(2, '0')}`;
-  const add = (f, ev) => (out[f] ||= []).push(ev);
+  const add = (f, ev) => (out[f] ||= []).push(ev), ix = indiceRec(e);
   for (const r of lista(e, 'recurrentes'))
     for (const f of fechasRec(r, r.desde > `${mes}-01` ? r.desde : `${mes}-01`, fin)) {
-      const clave = claveRec(r, f), p = e.movs[clave] && !e.movs[clave].del ? e.movs[clave] : lista(e, 'movs').find(x => x.rec === clave);
+      const clave = claveRec(r, f), p = e.movs[clave] && !e.movs[clave].del ? e.movs[clave] : ix.get(clave)?.[0];
       add(f, { tipo: tipoRec(r), nombre: r.nombre, monto: p?.monto ?? r.monto, moneda: r.moneda,
         estado: p ? (p.estado === 'pendiente' ? 'pendiente' : 'listo') : f < h ? 'atrasado' : 'proximo' });
     }
@@ -290,7 +325,7 @@ export function eventosMes(e, mes, h = hoy()) {
 export function mismaPersona(a, b) { // "Ana" ≈ "ANA MARIA SOLANO"; los SINPE cortan nombres ("BRENE" ≈ "Brenes")
   const t = s => norm(s).split(' ').filter(x => x.length >= 2);
   const [x, y] = [t(a), t(b)].sort((p, q) => p.length - q.length);
-  const igual = (p, q) => p === q || (Math.min(p.length, q.length) >= 4 && (p.startsWith(q) || q.startsWith(p)));
+  const igual = (p, q) => p === q || (Math.min(p.length, q.length) >= 5 && (p.startsWith(q) || q.startsWith(p)));
   return x.length > 0 && x.every(p => y.some(q => igual(p, q)));
 }
 export function saldosCompartidas(e) {
@@ -432,20 +467,45 @@ export const filasExport = (e, desde, hasta) => lista(e, 'movs').filter(m => m.e
 export function presupuestoDiario(e, h = hoy()) {
   const mes = mesDe(h), r = resumenMes(e, mes), tc = tcDe(e, h) || 0;
   let falta = 0;
-  const fin = `${mes}-${String(diasEnMes(mes)).padStart(2, '0')}`;
+  const fin = `${mes}-${String(diasEnMes(mes)).padStart(2, '0')}`, ix = indiceRec(e);
   for (const rc of lista(e, 'recurrentes')) // recurrentes que todavía no llegan este mes (los ingresos fijos no se cuentan)
     if (rc.clase !== 'ingreso' && h < fin)
       for (const f of fechasRec(rc, sumarDias(h, 1), fin))
-        if (!e.movs[claveRec(rc, f)] && !lista(e, 'movs').some(x => x.rec === claveRec(rc, f))) falta += rc.monto * (rc.moneda === 'USD' ? tc : 1);
+        if (!e.movs[claveRec(rc, f)] && !ix.has(claveRec(rc, f))) falta += enCRC(rc.monto, rc.moneda, tc);
   for (const d of lista(e, 'deudas')) {
     const saldo = saldoDeuda(e, d);
-    if (saldo > 0 && !pagoEnMes(e, d.id, mes)) falta += Math.min(d.cuota || 0, saldo) * (d.moneda === 'USD' ? tc : 1);
+    if (mes >= mesDe(d.inicio) && saldo > 0 && !pagoEnMes(e, d.id, mes)) falta += enCRC(Math.min(d.cuota || 0, saldo), d.moneda, tc);
   }
   for (const m of movsMes(e, mes))
-    if (m.estado === 'pendiente' && m.tipo === 'gasto') falta += m.monto * (m.moneda === 'USD' ? tc : 1);
+    if (m.estado === 'pendiente' && m.tipo === 'gasto') falta += enCRC(m.monto, m.moneda, tc);
   const dias = diasEnMes(mes) - +h.slice(8) + 1;
   const libre = r.disponible - falta;
   return { libre, falta, dias, porDia: libre / dias };
+}
+
+// ---------- Cómo vas este mes ----------
+// Ritmo de gasto, comparación pareja con el mes pasado (hasta el mismo día), lo que más subió y lo que falta por venir.
+export function comoVas(e, h = hoy()) {
+  const mes = mesDe(h), ant = mesAnterior(mes), dia = +h.slice(8), tc = tcDe(e, h) || 0;
+  const r = resumenMes(e, mes), ra = resumenMes(e, ant);
+  const esGasto = m => m.tipo === 'gasto' && m.estado !== 'pendiente' && !m.reembolso;
+  const tope = `${ant}-${String(Math.min(dia, diasEnMes(ant))).padStart(2, '0')}`;
+  const antPorCat = {};
+  for (const m of movsMes(e, ant)) if (esGasto(m) && m.fecha <= tope) antPorCat[m.cat] = (antPorCat[m.cat] || 0) + aCRC(m);
+  const antHastaHoy = Object.values(antPorCat).reduce((s, v) => s + v, 0);
+  let subio = null;
+  for (const [cat, v] of Object.entries(r.porCat)) {
+    const dif = v - (antPorCat[cat] || 0);
+    if (dif > 0 && (!subio || dif > subio.dif)) subio = { cat, dif };
+  }
+  const evs = Object.entries(eventosMes(e, mes, h)).sort(([a], [b]) => a.localeCompare(b));
+  const proximos = evs.filter(([f]) => f >= h).flatMap(([fecha, xs]) => xs.filter(x => x.estado === 'proximo').map(x => ({ fecha, ...x })));
+  // proyección: lo gastado + el ritmo de los gastos del día a día (sin recurrentes) en los días que quedan + los recurrentes que faltan
+  const variable = suma(movsMes(e, mes).filter(m => esGasto(m) && !m.rec));
+  const fijos = evs.flatMap(([, xs]) => xs).filter(x => x.tipo === 'gasto' && (x.estado === 'proximo' || x.estado === 'pendiente'))
+    .reduce((s, x) => s + enCRC(x.monto, x.moneda, tc), 0);
+  const proyeccion = dia >= 7 ? r.gastado + (variable / dia) * (diasEnMes(mes) - dia) + fijos : null; // antes del día 7 hay muy pocos datos
+  return { gastado: r.gastado, gastadoAnt: ra.gastado, antHastaHoy, dia, proyeccion, subio, proximos, ahorroPct: r.ingresos > 0 ? r.abonos / r.ingresos : null };
 }
 
 // ---------- Alertas ----------
@@ -458,10 +518,10 @@ export function alertas(e, h = hoy()) {
     if (g >= lim) out.push({ clave: `cat|${mes}|${c.id}|rojo`, nivel: 'rojo', texto: `${c.nombre}: ${g > lim ? 'te pasaste del' : 'llegaste al'} límite (${crc(g)} de ${crc(lim)})` });
     else if (g >= 0.8 * lim) out.push({ clave: `cat|${mes}|${c.id}|amarillo`, nivel: 'amarillo', texto: `${c.nombre}: ya usaste el ${Math.floor((g / lim) * 100)} % del límite` });
   }
-  if (r.gastado > r.ingresos && r.gastado > 0)
-    out.push({ clave: `sobre|${mes}`, nivel: 'rojo', texto: `Este mes llevás gastado más de lo que entró (${crc(r.gastado)} contra ${crc(r.ingresos)})` });
+  if (r.disponible < 0)
+    out.push({ clave: `sobre|${mes}`, nivel: 'rojo', texto: `Gastaste más de lo que tenías: te faltan ${crc(-r.disponible)}` });
   for (const d of lista(e, 'deudas')) {
-    if (saldoDeuda(e, d) <= 0 || pagoEnMes(e, d.id, mes)) continue;
+    if (mes < mesDe(d.inicio) || saldoDeuda(e, d) <= 0 || pagoEnMes(e, d.id, mes)) continue;
     const faltan = diasEntre(h, fechaPagoDeuda(d, mes));
     if (faltan >= 0 && faltan <= 3)
       out.push({ clave: `deuda|${d.id}|${mes}`, nivel: 'amarillo', texto: `Pago a ${d.acreedor} ${faltan === 0 ? 'hoy' : faltan === 1 ? 'mañana' : `en ${faltan} días`} (${monto(d.cuota, d.moneda)})` });
@@ -537,9 +597,10 @@ export function aplicarRevision(e, m, { descartar, monto, valor }) {
 export function razonRevision(e, m) {
   if (m.noReconocido) return 'No pude leer este correo';
   if (!(m.monto > 0) || !m.fecha) return 'Le falta el monto o la fecha';
+  if (m.sinFirma) return 'Este correo no trae la firma del banco: revisá que sea real antes de guardarlo';
   if (recurrenteDe(e, m)) return null; // calza con un recurrente o ingreso fijo: se une con su pendiente
-  const dd = deudaDe(e, m); // pagarle a quien le debés se marca solo; lo que te pagan a vos pasa por la revisión
-  if (dd) return dd.sentido === 'debo' ? null : `${dd.persona} te debe plata: ¿es el pago?`;
+  const dd = deudaDe(e, m); // se parece por nombre y monto, pero puede ser otra persona u otra cosa: siempre se pregunta
+  if (dd) return dd.sentido === 'debo' ? `¿Es el pago de lo que le debés a ${dd.persona}?` : `${dd.persona} te debe plata: ¿es el pago?`;
   if (m.confirmar) return '¿Fue un viaje o Uber Eats?';
   if (m.origen === 'uber') return 'Recibo de Uber sin el cobro del banco: revisá que no lo anotaras ya';
   const repetido = lista(e, 'movs').some(x => x.origen !== 'correo' && x.origen !== 'siri' && x.tipo === m.tipo

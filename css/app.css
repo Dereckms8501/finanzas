@@ -12,7 +12,7 @@
    Sakura y Yamabuki no se leen como texto sobre fondo claro, así que en modo claro el texto usa versiones más oscuras. */
 :root {
   --fondo: #F7F4EC; --tarjeta: #FFFFFF; --borde: #ECE7DB; --campo: #F3EFE6;
-  --texto: #1D2731; --texto2: #69727C;
+  --texto: #1D2731; --texto2: #5F6873;
   --principal: #165E83; --sobre-principal: #FFFFFF;
   --hondo: #0E3550; --sobre-hondo: #F7F4EC; --hondo2: #A9C3D3; --cifra: #F9D3DC;
   --acento: #F4B3C2; --acento-texto: #B03A5B; --sakura-suave: #FBE4EA;
@@ -205,14 +205,15 @@ label.check { display: flex; align-items: center; gap: 8px; color: var(--texto);
 label.check input { width: 20px; min-height: 20px; }
 .fila { display: flex; gap: 8px; align-items: end; }
 .fila > select, .fila > .btn { width: auto; flex: none; }
-.fila > label { flex: 1; }
+.fila > label, .fila > input { flex: 1; min-width: 0; }
+.fila input { min-width: 0; }
 .fila > .btn.crece { flex: 1; }
 .form-mov > .seg { display: grid; grid-template-columns: 1fr 1fr; }
 .form-mov > .seg label { text-align: center; }
 .form-col, .form-mov { display: grid; gap: 10px; }
 .form-mov .monto-inp { font-size: 22px; font-weight: 500; }
-.form-mov:has(input[value="ingreso"]:checked) .solo-gasto,
-.form-mov:has(input[value="gasto"]:checked) .solo-ingreso { display: none; }
+.form-mov:has(input[name="tipo"][value="ingreso"]:checked) .solo-gasto,
+.form-mov:has(input[name="tipo"][value="gasto"]:checked) .solo-ingreso { display: none; }
 .moneda-fija { min-height: 44px; display: grid; place-items: center; padding: 0 12px; color: var(--texto2); }
 .filtros { display: flex; gap: 8px; margin-bottom: 8px; }
 
@@ -222,7 +223,7 @@ label.check input { width: 20px; min-height: 20px; }
   font-size: 14px; color: var(--texto2); transition: background .12s, color .12s;
 }
 .seg .activa, .seg label:has(input:checked) { background: var(--tarjeta); color: var(--texto); font-weight: 500; box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
-.seg input, .iconos-sel input { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; min-height: 0; padding: 0; }
+.seg input, .iconos-sel input, .chips-sel input { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; min-height: 0; padding: 0; }
 .pestañas { margin-bottom: 16px; display: flex; width: fit-content; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .pestañas button { flex: none; white-space: nowrap; }
 @media (max-width: 560px) { .pestañas button { padding: 6px 10px; } }
@@ -328,7 +329,7 @@ textarea.llave { width: 100%; font: 12px/1.4 ui-monospace, Consolas, monospace; 
 .meta .pct, .deuda .pct { font-size: 14px; color: var(--acento-texto); font-weight: 600; }
 .seccion { margin-top: 28px; }
 .deuda .pct { color: var(--exito); }
-.acciones { display: flex; align-items: center; gap: 4px; margin-top: 10px; }
+.acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 10px; }
 .acciones .btn { margin-right: auto; }
 details { margin-top: 10px; font-size: 14px; }
 summary { cursor: pointer; color: var(--texto2); }
@@ -428,3 +429,43 @@ dialog h2 { font-size: 19px; color: var(--texto); margin-right: 36px; }
 .fila-btn:last-child { border-bottom: 0; }
 .rev .razon { display: block; font-size: 13px; color: var(--aviso-texto); margin-top: 2px; }
 .mov[data-a] { cursor: pointer; border-radius: 4px; }
+
+/* Formulario de anotar: monto grande, categorías como fichas, medio en botones */
+.form-mov { gap: 14px; }
+.monto-grande { display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 18px; border-radius: 18px; background: var(--campo); }
+.monto-grande:focus-within { outline: 2px solid var(--principal); outline-offset: 1px; }
+.form-mov .monto-grande .monto-inp { flex: 1; min-width: 0; background: none; padding: 0; font-size: 30px; font-weight: 600; min-height: 56px; outline: none; font-variant-numeric: tabular-nums; }
+.monto-grande .seg { flex: none; background: var(--tarjeta); }
+.monto-grande .seg label { padding: 6px 12px; font-size: 16px; }
+.monto-grande .seg label:has(input:checked) { background: var(--principal); color: #fff; box-shadow: none; }
+.chips-sel { display: flex; flex-wrap: wrap; gap: 8px; }
+.chips-sel label { display: flex; align-items: center; gap: 8px; padding: 5px 14px 5px 5px; border-radius: 999px; background: var(--campo); color: var(--texto); font-size: 14px; cursor: pointer; }
+.chips-sel label:not(:has(.ic-cat)) { padding: 9px 14px; }
+.chips-sel .ic-cat { width: 30px; height: 30px; }
+.chips-sel .ic-cat svg { width: 16px; height: 16px; }
+.chips-sel label:has(input:checked) { box-shadow: inset 0 0 0 2px var(--principal); background: var(--tarjeta); font-weight: 500; }
+.chips-sel label:has(input:focus-visible), .seg label:has(input:focus-visible) { outline: 2px solid var(--principal); outline-offset: 1px; }
+.form-mov > .seg.medios { grid-template-columns: repeat(3, 1fr); }
+details.mas { margin: 0; }
+details.mas summary { padding: 4px 0; font-size: 14px; }
+details.mas .form-col { margin-top: 10px; }
+
+/* Inicio: enlace a "Cómo vas este mes" */
+.enlace-tarjeta { display: flex; align-items: center; gap: 14px; width: 100%; border: 0; text-align: left; color: inherit; cursor: pointer; }
+.enlace-tarjeta .txt, .mes-plegable .txt { flex: 1; min-width: 0; display: grid; }
+.enlace-tarjeta .txt b, .mes-plegable .txt b { font-weight: 500; }
+.enlace-tarjeta .txt .sec, .mes-plegable .txt .sec { font-size: 13px; }
+.chev { font-size: 24px; line-height: 1; color: var(--texto2); transition: transform .15s; }
+.volver { border: 0; background: none; color: var(--principal); font: inherit; font-size: 15px; padding: 4px 0; margin-bottom: 6px; cursor: pointer; }
+
+/* Movimientos agrupados por mes */
+.grupo-mes { padding: 4px 18px; }
+.mes-plegable { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 0; border: 0; background: none; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+.mes-plegable[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.grupo-movs { border-top: 1px solid var(--borde); }
+@media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
+
+/* al salir de la app se tapa la pantalla (el selector de apps no muestra los datos) */
+body.tapada #raiz, body.tapada #dlg { visibility: hidden; }
+.mov-titulo { display: block; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.mov-titulo b { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

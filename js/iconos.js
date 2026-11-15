@@ -28,7 +28,6 @@ const P = {
   mas: '<path d="M12 5v14M5 12h14"/>',
   cerrar: '<path d="M6 6l12 12M18 6 6 18"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
-  faceid: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M9 9v1.5M15 9v1.5M12 9v4h-1M9.5 16a4 4 0 0 0 5 0"/>',
   correo: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6 8.5-6"/>',
 };
 export const ICONOS_EXTRA = ['casa', 'corazon', 'regalo', 'libro', 'celular', 'camisa', 'carrito', 'plato', 'mancuerna', 'carro', 'birrete', 'puntos'];

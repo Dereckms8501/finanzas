@@ -19,6 +19,10 @@ ok('negativo', esp(D.crc(-3000)) === '−₡3 000', esp(D.crc(-3000)));
 igual('leer "3 500"', D.parseMonto('3 500'), 3500);
 igual('leer "12,50"', D.parseMonto('12,50'), 12.5);
 igual('leer "1.250,75"', D.parseMonto('1.250,75'), 1250.75);
+igual('leer "1.500" como mil quinientos', D.parseMonto('1.500'), 1500);
+igual('leer "1,500" como mil quinientos', D.parseMonto('1,500'), 1500);
+igual('leer "1,250.75"', D.parseMonto('1,250.75'), 1250.75);
+igual('leer "12 500,5"', D.parseMonto('12 500,5'), 12500.5);
 ok('leer basura = NaN', Number.isNaN(D.parseMonto('abc')));
 
 // Fechas
@@ -57,17 +61,23 @@ igual('gastado (sin pendientes ni otros meses)', r.gastado, 28500);
 igual('gasto en dólares convertido con su TC', r.porCat.supermercados, 5000);
 igual('abonos del mes', r.abonos, 5000);
 igual('pagos del mes', r.pagos, 3000);
-igual('disponible', r.disponible, 120000 - 28500 - 5000 - 3000);
+igual('lo que sobró o faltó del mes pasado', r.arrastre, -99999);
+igual('disponible (incluye lo del mes pasado)', r.disponible, 120000 - 28500 - 5000 - 3000 - 99999);
 igual('SINPE enviados', r.sinpeEnv, 3500);
 igual('SINPE recibidos', r.sinpeRec, 20000);
 igual('total ahorrado', D.totalAhorrado(e), 5000);
 igual('total que debo', D.totalDebo(e, 510), 27000);
 
 // Presupuesto diario el 2026-11-13. La deuda d1 ya tiene un pago este mes, así que no se resta su cuota.
-igual('presupuesto diario (deuda ya pagada este mes)', D.presupuestoDiario(e, '2026-11-13').porDia, (83500 - 15000) / 18);
+igual('presupuesto diario (deuda ya pagada este mes)', D.presupuestoDiario(e, '2026-11-13').porDia, (83500 - 99999 - 15000) / 18);
 // Deuda sin pago este mes: su cuota sí se resta y avisa 2 días antes
 D.poner(e, 'deudas', { id: 'd2', acreedor: 'Banco', total: 50000, moneda: 'CRC', cuota: 10000, dia: 15, tasa: 0, inicio: '2026-10-01' });
-igual('presupuesto diario (resta cuota pendiente)', D.presupuestoDiario(e, '2026-11-13').porDia, (83500 - 15000 - 10000) / 18);
+igual('presupuesto diario (resta cuota pendiente)', D.presupuestoDiario(e, '2026-11-13').porDia, (83500 - 99999 - 15000 - 10000) / 18);
+D.poner(e, 'deudas', { id: 'd3', acreedor: 'Futura', total: 50000, moneda: 'CRC', cuota: 7000, dia: 14, tasa: 0, inicio: '2027-01-01' });
+igual('deuda que empieza en otro mes no se resta', D.presupuestoDiario(e, '2026-11-13').porDia, (83500 - 99999 - 15000 - 10000) / 18);
+ok('deuda que empieza en otro mes no avisa', !D.alertas(e, '2026-11-13').some(a => a.clave.startsWith('deuda|d3')));
+D.quitar(e, 'deudas', 'd3');
+ok('alerta cuando el disponible queda en negativo', D.alertas(e, '2026-11-13').some(a => a.clave === 'sobre|2026-11'));
 
 // Límites y alertas
 D.ponerLimite(e, '2026-10', 'restaurantes', 25000);
@@ -285,7 +295,7 @@ try {
   ok('dividir: montos distintos', D.repartir(9000, 'CRC', { yo: true, personas: ['Ana', 'Luis'], modo: 'distintos', montos: { Ana: 4000, Luis: 2000 } }).mia === 3000);
   ok('dividir: partes que suman más que el total dan error', !!D.repartir(5000, 'CRC', { yo: true, personas: ['Ana'], modo: 'distintos', montos: { Ana: 6000 } }).error);
   ok('dividir: pagó otra persona', (r => !r.yo && r.mia === 3000 && r.partes[0].persona === 'Pedro')(D.repartir(9000, 'CRC', { yo: false, quienPago: 'Pedro', modo: 'iguales', cuantos: 3 })));
-  ok('nombres parecidos: SINPE con el nombre cortado', D.mismaPersona('Logan Brenes', 'LOGAN MARIANO BRENE') && D.mismaPersona('Ana', 'ANA MARÍA SOLANO') && !D.mismaPersona('Ana', 'ANABEL ROJAS'));
+  ok('nombres parecidos: SINPE con el nombre cortado', D.mismaPersona('Logan Brenes', 'LOGAN MARIANO BRENE') && D.mismaPersona('Ana', 'ANA MARÍA SOLANO') && !D.mismaPersona('Ana', 'ANABEL ROJAS') && !D.mismaPersona('Mari', 'MARIO SOTO'));
 
   const ex = D.estadoNuevo('Comp', 500);
   D.poner(ex, 'movs', { id: 'in', tipo: 'ingreso', monto: 50000, moneda: 'CRC', fecha: '2026-11-01', medio: 'SINPE', fuente: 'beca', estado: 'ok' });
@@ -309,7 +319,9 @@ try {
   ok('pagó otra persona: tu parte es gasto y queda en "Debo"', rx.gastado === 7000 && ex.movs.piz.monto === 4000 && ex.movs.piz.medio === ''
     && D.saldosCompartidas(ex).find(s => s.sentido === 'debo').saldo === 4000);
   const sPedro = { id: 'k2', origen: 'kash', tipo: 'gasto', medio: 'SINPE', monto: 4000, moneda: 'CRC', fecha: '2026-11-06', quien: 'PEDRO JIMENEZ', cat: 'otros' };
-  ok('SINPE a quien le debés: se marca solo como pago', D.claroCorreo(ex, sPedro) && D.anotarClaros(ex, [sPedro]) === 1);
+  ok('SINPE a quien le debés: se pregunta antes de tomarlo como pago', !D.claroCorreo(ex, sPedro) && D.anotarClaros(ex, [sPedro]) === 0
+    && /Pedro/.test(D.razonRevision(ex, sPedro)) && D.sugerirCorreo(ex, sPedro) === 'deuda:Pedro');
+  D.aplicarRevision(ex, sPedro, { valor: D.sugerirCorreo(ex, sPedro) });
   rx = D.resumenMes(ex, '2026-11');
   ok('ese SINPE no se cuenta otra vez como gasto', rx.gastado === 7000 && rx.sinpeEnv === 4000 && ex.movs['c-k2'].reembolso
     && D.saldosCompartidas(ex).find(s => s.sentido === 'debo').saldo === 0);
@@ -370,8 +382,42 @@ try {
   const sp = n => ({ id: 'sp' + n, origen: 'kash', tipo: 'gasto', medio: 'SINPE', monto: 2500 + n, moneda: 'CRC', fecha: '2026-11-0' + n, quien: 'JUAN PEREZ', cat: 'otros' });
   ok('SINPE nuevo: dice por qué lo pregunta', /SINPE/.test(D.razonRevision(es, sp(1)) || ''));
   D.aplicarRevision(es, sp(1), { valor: 'otros' });
+  ok('correo sin la firma del banco: se pregunta aunque sea un ingreso', /firma/.test(D.razonRevision(es, { ...sp(4), tipo: 'ingreso', sinFirma: true }) || ''));
   ok('SINPE: después de confirmarlo una vez se anota solo', D.claroCorreo(es, sp(2)) && D.anotarClaros(es, [sp(2)]) === 1);
   ok('recibo de Uber sin cobro: dice por qué', /Uber/.test(D.razonRevision(es, { ...sp(3), origen: 'uber', quien: 'Uber Eats', cat: 'restaurantes' }) || ''));
+
+  // Cómo vas este mes
+  const ev = D.estadoNuevo('ComoVas', 500);
+  const gv = (id, monto, fecha, cat) => D.poner(ev, 'movs', { id, tipo: 'gasto', monto, moneda: 'CRC', fecha, medio: 'Tarjeta', cat, estado: 'ok' });
+  D.poner(ev, 'movs', { id: 'iv', tipo: 'ingreso', monto: 100000, moneda: 'CRC', fecha: '2026-11-01', medio: 'SINPE', fuente: 'beca', estado: 'ok' });
+  gv('v1', 10000, '2026-10-05', 'restaurantes'); gv('v2', 30000, '2026-10-20', 'supermercados');
+  gv('v3', 12000, '2026-11-03', 'restaurantes'); gv('v4', 3000, '2026-11-08', 'supermercados');
+  D.poner(ev, 'abonos', { id: 'av', metaId: 'x', monto: 20000, moneda: 'CRC', fecha: '2026-11-02' });
+  D.poner(ev, 'recurrentes', { id: 'rv', clase: 'gasto', nombre: 'Spotify', monto: 2500, moneda: 'CRC', cat: 'otros', medio: 'Tarjeta', frecuencia: 'mensual', dias: [25], desde: '2026-10-01' });
+  const cv = D.comoVas(ev, '2026-11-10');
+  ok('cómo vas: ritmo del mes y comparación al mismo día', cv.gastado === 15000 && cv.proyeccion === 15000 + 1500 * 20 + 2500 && cv.antHastaHoy === 10000 && cv.gastadoAnt === 40000, JSON.stringify(cv));
+  ok('cómo vas: lo que más subió (al mismo día) y cuánto ahorraste', cv.subio?.cat === 'supermercados' && cv.subio.dif === 3000 && cv.ahorroPct === 0.2, JSON.stringify(cv.subio));
+  ok('cómo vas: sin proyección los primeros 6 días', D.comoVas(ev, '2026-11-05').proyeccion === null);
+  D.poner(ev, 'recurrentes', { id: 'alq', clase: 'gasto', nombre: 'Alquiler', monto: 150000, moneda: 'CRC', cat: 'otros', medio: 'SINPE', frecuencia: 'mensual', dias: [2], desde: '2026-10-01' });
+  D.poner(ev, 'movs', { id: 'r-alq-2026-11-02', tipo: 'gasto', monto: 150000, moneda: 'CRC', fecha: '2026-11-02', medio: 'SINPE', cat: 'otros', estado: 'ok', rec: 'r-alq-2026-11-02' });
+  igual('cómo vas: un pago fijo grande no infla la proyección', D.comoVas(ev, '2026-11-10').proyeccion, 165000 + 1500 * 20 + 2500);
+  D.poner(ev, 'metas', { id: 'mv', nombre: 'Viaje', objetivo: 50000, moneda: 'CRC', creada: '2026-11-01' });
+  D.poner(ev, 'abonos', { id: 'av2', metaId: 'mv', monto: 8000, moneda: 'CRC', fecha: '2026-10-15' });
+  const dispAntes = D.resumenMes(ev, '2026-11').disponible;
+  D.quitar(ev, 'metas', 'mv');
+  ok('borrar una meta no cambia el pasado y ya no cuenta como ahorrado', D.resumenMes(ev, '2026-11').disponible === dispAntes && D.totalAhorrado(ev) === 0);
+  ok('cómo vas: lo que viene este mes', cv.proximos.length === 1 && cv.proximos[0].nombre === 'Spotify' && cv.proximos[0].fecha === '2026-11-25');
+
+  // Respaldo "dejarlo igual": vuelve lo borrado y se borra lo de después
+  const er2 = D.estadoNuevo('Resp', 500);
+  D.poner(er2, 'movs', { id: 'ra', tipo: 'gasto', monto: 1000, moneda: 'CRC', fecha: '2026-11-01', medio: 'Tarjeta', cat: 'otros', estado: 'ok' });
+  const copia = JSON.parse(JSON.stringify(er2));
+  D.quitar(er2, 'movs', 'ra');
+  D.poner(er2, 'movs', { id: 'rb', tipo: 'gasto', monto: 2000, moneda: 'CRC', fecha: '2026-11-02', medio: 'Tarjeta', cat: 'otros', estado: 'ok' });
+  const borradoEn = er2.movs.ra.upd;
+  D.restaurarExacto(er2, copia);
+  ok('respaldo igual: vuelve lo borrado, se borra lo nuevo y gana al sincronizar', !er2.movs.ra.del && er2.movs.rb.del && er2.movs.ra.upd >= borradoEn
+    && !D.combinar(er2, copia).movs.ra.del);
 
   const nuevas = D.agregarTcAuto(ec, { '2026-11-12': { compra: 440, venta: 450 }, '2026-11-13': { compra: 0, venta: 451 } });
   ok('tipo de cambio automático: solo fechas válidas', nuevas.join() === '2026-11-12' && D.tcDe(ec, '2026-11-12') === 450);
