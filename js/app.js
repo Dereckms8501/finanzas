@@ -1,3 +1,4 @@
+// Pantallas y eventos. Índice de secciones: grep -n "^// ----" js/app.js  (mapa completo en CLAUDE.md)
 import * as C from './cripto.js';
 import * as D from './datos.js';
 import * as G from './graficos.js';
@@ -969,7 +970,7 @@ function formRec(r = {}) {
     <p class="nota">Si un cobro o SINPE del correo trae este texto, con un monto parecido (5 % de diferencia o menos) y a 3 días o menos de la fecha, se une solo con este ${ing ? 'ingreso' : 'pago'} y no se duplica.</p>
     <button class="btn">Guardar</button></form>`;
 }
-const formMontoFecha =(titulo, f, id, valor, moneda) => `<h2>${esc(titulo)}</h2><form data-f="${f}" data-id="${id}" class="form-col">
+const formMontoFecha = (titulo, f, id, valor, moneda) => `<h2>${esc(titulo)}</h2><form data-f="${f}" data-id="${id}" class="form-col">
   <div class="fila"><input name="monto" inputmode="decimal" placeholder="Monto" value="${valor ? D.numPlano(valor, moneda) : ''}" required autofocus><span class="moneda-fija">${moneda === 'USD' ? '$' : '₡'}</span></div>
   <input name="fecha" type="date" value="${D.hoy()}" required><button class="btn">Guardar</button></form>`;
 

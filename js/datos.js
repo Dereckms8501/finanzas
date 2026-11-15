@@ -592,10 +592,8 @@ export function aplicarRevision(e, m, { descartar, monto, valor }) {
   return poner(e, 'movs', mov);
 }
 
-// ¿Se puede anotar sin preguntar? Sí: ingresos (SINPE recibido), lo que vino de Siri, y gastos con regla aprendida
-// o categoría clara. No: lo dudoso (Uber sin recibo, recibo de Uber sin cobro del banco, categoría "otros")
-// ni lo que se parece a algo que ya anotaste a mano (mismo monto, ±1 día), para no duplicar.
 // Por qué un movimiento del correo pasa por la revisión; null = está claro y se anota solo.
+// Se anotan solos: recurrentes que calzan, ingresos, lo de Siri y gastos con regla o categoría clara.
 export function razonRevision(e, m) {
   if (m.noReconocido) return 'No pude leer este correo';
   if (!(m.monto > 0) || !m.fecha) return 'Le falta el monto o la fecha';
