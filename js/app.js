@@ -505,7 +505,7 @@ function vPresup() {
 
 // ---------------- Movimientos ----------------
 function formMov(m = {}) {
-  const tipo = m.tipo || 'gasto', mon = m.moneda || ui.ult.moneda, medio = m.medio || ui.ult.medio, fuente = m.fuente || 'beca';
+  const tipo = m.tipo || 'gasto', mon = m.moneda || 'CRC', medio = m.medio || ui.ult.medio, fuente = m.fuente || 'beca';
   const quienes = [...new Set(D.lista(E, 'movs').map(x => x.quien).filter(Boolean))].sort();
   const radio = (name, value, actual, cont) => `<label><input type="radio" name="${name}" value="${esc(value)}" ${actual === value ? 'checked' : ''}>${cont}</label>`;
   const conDetalles = m.nota || (m.fecha && m.fecha !== D.hoy()), cs = D.cats(E);

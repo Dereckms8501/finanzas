@@ -99,8 +99,10 @@ export const fechaLarga = f => fFecha.format(new Date(f + 'T00:00:00Z')).replace
 
 // ---------- Formato de montos ----------
 // fr-FR usa espacio como separador de miles y coma decimal: ₡12 500 y $1 250,00
-const nCRC = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 });
-const nUSD = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// el espacio fino que trae fr-FR casi no se ve con la letra Lexend: se cambia por un espacio normal que no corta la línea
+const conEspacio = f => ({ format: n => f.format(n).replace(/ /g, ' ') });
+const nCRC = conEspacio(new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }));
+const nUSD = conEspacio(new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const signo = n => (Math.round(n * 100) < 0 ? '−' : '');
 export const crc = n => signo(n) + '₡' + nCRC.format(Math.abs(Math.round(n)));
 export const usd = n => signo(n) + '$' + nUSD.format(Math.abs(n));
